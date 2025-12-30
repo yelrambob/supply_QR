@@ -1,6 +1,9 @@
+import os
 import pandas as pd
 import qrcode
 from pathlib import Path
+
+catalog = 
 
 # Load spreadsheet
 df = pd.read_csv("items.csv")  # or read_excel("items.xlsx")
