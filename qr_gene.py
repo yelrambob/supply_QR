@@ -3,10 +3,10 @@ import pandas as pd
 import qrcode
 from pathlib import Path
 
-catalog = 
+CATALOG = DATA_DIR / "catalog.csv"
 
 # Load spreadsheet
-df = pd.read_csv("items.csv")  # or read_excel("items.xlsx")
+df = pd.read_csv(CATALOG)  # or read_excel(CATALOG)
 
 out_dir = Path("qr_codes")
 out_dir.mkdir(exist_ok=True)
