@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-from pandas.errors import EmptyDataError
 import zoneinfo
 from datetime import datetime
 from pathlib import Path
@@ -14,6 +13,11 @@ from db.supabase_client import (
     last_info_map,
 )
 
+from data.catalog import (
+    read_catalog,
+    write_catalog,
+)
+
 st.set_page_config(page_title="Supply Ordering", page_icon="📦", layout="wide")
 
 NYC = zoneinfo.ZoneInfo("America/New_York")
@@ -24,23 +28,8 @@ APP_DIR = Path(__file__).resolve().parent
 DATA_DIR = APP_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
 
-CATALOG_PATH = DATA_DIR / "catalog.csv"
 PEOPLE_PATH = DATA_DIR / "people.txt"
 EMAILS_PATH = DATA_DIR / "emails.csv"
-
-# ---------------- Robust file helpers ----------------
-def safe_read_csv(path: Path, **kwargs) -> pd.DataFrame:
-    if not path.exists() or path.stat().st_size == 0:
-        return pd.DataFrame()
-    try:
-        return pd.read_csv(path, encoding="utf-8", **kwargs)
-    except UnicodeDecodeError:
-        return pd.read_csv(path, encoding="latin-1", **kwargs)
-    except EmptyDataError:
-        return pd.DataFrame()
-    except Exception as e:
-        st.warning(f"Couldn't read {path.name}: {e}")
-        return pd.DataFrame()
 
 # ---------------- SMTP ----------------
 def _split_emails(txt: str) -> list[str]:
@@ -101,31 +90,14 @@ def read_people() -> list[str]:
     if not PEOPLE_PATH.exists():
         return []
     try:
-        return [ln.strip() for ln in PEOPLE_PATH.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        return [
+            ln.strip()
+            for ln in PEOPLE_PATH.read_text(encoding="utf-8").splitlines()
+            if ln.strip()
+        ]
     except Exception as e:
         st.warning(f"Couldn't read people.txt: {e}")
         return []
-
-@st.cache_data
-def read_catalog() -> pd.DataFrame:
-    df = safe_read_csv(CATALOG_PATH)
-    if df.empty:
-        return pd.DataFrame(
-            columns=[
-                "item",
-                "product_number",
-                "multiplier",
-                "items_per_order",
-                "current_qty",
-                "sort_order",
-                "price",
-            ]
-        )
-    # unchanged logic...
-    return df.reset_index(drop=True)
-
-def write_catalog(df: pd.DataFrame):
-    df.to_csv(CATALOG_PATH, index=False)
 
 # ---------------- UI ----------------
 st.title("📦 Supply Ordering & Inventory Tracker")
