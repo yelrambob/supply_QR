@@ -1,17 +1,19 @@
 """
 pages/scan_order.py — Quick Supply Order
-- One general QR code opens this page
-- In-app camera scanner reads barcodes/QR codes of individual items
-- Cart stored in Supabase — persists across reruns without killing the camera
-- Camera stays open between scans
+
+How it works:
+- Each supply location has a fixed cart_id (e.g. "supply-room-1")
+- Item barcode labels encode: /scan_order?product_number=ABC&cart_id=supply-room-1
+- Scanning any item label with phone camera adds it to that location's Supabase cart
+- This page reads the cart from Supabase and shows it live
+- Submit sends one email with all items, clears the cart
 """
 
 import streamlit as st
-import streamlit.components.v1 as components
 import pandas as pd
 import json
-import uuid
 import re
+import uuid
 from pathlib import Path
 import sys
 
@@ -31,7 +33,7 @@ CART_TABLE  = "pending_carts"
 
 
 @st.cache_resource
-def get_supabase():
+def get_sb():
     from supabase import create_client
     return create_client(st.secrets["supabase"]["url"], st.secrets["supabase"]["key"])
 
@@ -57,16 +59,16 @@ def read_emails() -> pd.DataFrame:
 # ── Supabase cart helpers ──────────────────────────────────────────────────────
 def cart_get(cart_id: str) -> dict:
     try:
-        res = get_supabase().table(CART_TABLE).select("items").eq("cart_id", cart_id).execute()
+        res = get_sb().table(CART_TABLE).select("items").eq("cart_id", cart_id).execute()
         if res.data:
-            return json.loads(res.data[0]["items"])
+            return json.loads(res.data[0]["items"] or "{}")
     except Exception:
         pass
     return {}
 
 def cart_upsert(cart_id: str, items: dict, orderer: str = ""):
     try:
-        get_supabase().table(CART_TABLE).upsert({
+        get_sb().table(CART_TABLE).upsert({
             "cart_id": cart_id,
             "items":   json.dumps(items),
             "orderer": orderer,
@@ -74,27 +76,16 @@ def cart_upsert(cart_id: str, items: dict, orderer: str = ""):
     except Exception as e:
         st.warning(f"Cart save error: {e}")
 
-def cart_delete(cart_id: str):
+def cart_clear(cart_id: str):
     try:
-        get_supabase().table(CART_TABLE).delete().eq("cart_id", cart_id).execute()
+        get_sb().table(CART_TABLE).upsert({
+            "cart_id": cart_id,
+            "items":   "{}",
+            "orderer": "",
+        }).execute()
     except Exception:
         pass
 
-
-# ── Session state ──────────────────────────────────────────────────────────────
-if "cart_id" not in st.session_state:
-    # Check URL first, else generate new id
-    params = st.query_params
-    cid = params.get("cart_id", "").strip()
-    st.session_state["cart_id"] = cid if cid else str(uuid.uuid4())[:8]
-    st.query_params.update({"cart_id": st.session_state["cart_id"]})
-
-if "last_scan" not in st.session_state:
-    st.session_state["last_scan"] = ""
-if "just_added" not in st.session_state:
-    st.session_state["just_added"] = ""
-
-cart_id = st.session_state["cart_id"]
 
 # ── Load data ──────────────────────────────────────────────────────────────────
 catalog = read_catalog()
@@ -105,210 +96,68 @@ if catalog.empty:
     st.stop()
 
 catalog["product_number"] = catalog["product_number"].astype(str)
-
 multiplier_map = {
     str(r["product_number"]): int(r.get("multiplier", 1) or 1)
     for _, r in catalog.iterrows()
 }
 
-# Load cart from Supabase
+# ── URL params ─────────────────────────────────────────────────────────────────
+params               = st.query_params
+product_number_param = params.get("product_number", "").strip()
+qty_param            = params.get("qty", "").strip()
+cart_id              = params.get("cart_id", "").strip()
+
+# If no cart_id in URL, show a friendly landing page
+if not cart_id:
+    st.markdown(
+        '<h2 style="text-align:center;padding:1rem 0 0.5rem">📱 Quick Supply Order</h2>'
+        '<p style="text-align:center;color:#666">Scan an item label to start your order.<br>'
+        'Make sure you are using the correct location QR code.</p>',
+        unsafe_allow_html=True,
+    )
+    st.stop()
+
+# ── Process incoming scan ──────────────────────────────────────────────────────
+# Load current cart from Supabase
 cart = cart_get(cart_id)
+just_added = None
+
+if product_number_param and product_number_param in multiplier_map:
+    try:
+        qty = max(1, int(qty_param)) if qty_param else multiplier_map[product_number_param]
+    except ValueError:
+        qty = multiplier_map[product_number_param]
+    cart[product_number_param] = qty
+    cart_upsert(cart_id, cart)
+    just_added = product_number_param
+    # Clean URL — remove product_number/qty but keep cart_id
+    st.query_params.update({"cart_id": cart_id})
 
 # ── Header ─────────────────────────────────────────────────────────────────────
 st.markdown(
-    '<h2 style="text-align:center;padding:0.5rem 0 0.1rem">📱 Quick Supply Order</h2>',
+    f'<h2 style="text-align:center;padding:0.5rem 0 0.1rem">📱 Quick Supply Order</h2>'
+    f'<p style="text-align:center;color:#888;font-size:.85rem">Cart: {cart_id}</p>',
     unsafe_allow_html=True,
 )
 
-if st.session_state["just_added"]:
-    pid = st.session_state["just_added"]
-    row = catalog.loc[catalog["product_number"] == pid]
-    item_name = row.iloc[0]["item"] if not row.empty else pid
-    st.success(f"✅ **{item_name}** added — {len(cart)} item(s) in cart.")
-    st.session_state["just_added"] = ""
+if just_added:
+    row = catalog.loc[catalog["product_number"] == just_added]
+    name = row.iloc[0]["item"] if not row.empty else just_added
+    st.success(f"✅ **{name}** added — {len(cart)} item(s) in cart. Scan another or submit.")
 elif cart:
-    st.info(f"🛒 {len(cart)} item(s) in cart.")
+    st.info(f"🛒 {len(cart)} item(s) in cart. Scan more items or submit below.")
 else:
-    st.caption("Scan an item barcode to start your order.")
+    st.info("Cart is empty — scan an item barcode label to add items.")
 
 st.divider()
 
-orderer_name = st.text_input("Your name (optional)", placeholder="Leave blank to submit as Anonymous")
+orderer_name = st.text_input(
+    "Your name (optional)",
+    placeholder="Leave blank to submit as Anonymous",
+)
 st.divider()
 
-# ── Scanner ────────────────────────────────────────────────────────────────────
-# zxing-js reads Code128 barcodes AND QR codes
-# Sends scanned value to Streamlit via a hidden text input (same-origin iframe trick)
-# The iframe is rendered with a fixed key so Streamlit never destroys it on rerun
-
-catalog_json = json.dumps(multiplier_map)
-
-scanner_html = f"""<!DOCTYPE html>
-<html>
-<head>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<style>
-*{{box-sizing:border-box;margin:0;padding:0}}
-body{{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:transparent;padding:4px 2px}}
-#btn{{width:100%;padding:15px;font-size:1.05rem;font-weight:700;background:#0068c9;
-  color:#fff;border:none;border-radius:10px;cursor:pointer;transition:background .15s}}
-#btn.on{{background:#c0392b}}
-#cam-box{{display:none;position:relative;margin-top:10px;border-radius:12px;
-  overflow:hidden;background:#000;width:100%}}
-#cam-box.active{{display:block}}
-video{{width:100%;display:block;max-height:300px;object-fit:cover}}
-#aim{{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
-  width:80%;height:30%;border:3px solid rgba(255,255,255,.9);border-radius:6px;
-  box-shadow:0 0 0 9999px rgba(0,0,0,.45);pointer-events:none}}
-#hint{{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);
-  background:rgba(0,0,0,.65);color:#fff;font-size:.78rem;padding:4px 12px;
-  border-radius:20px;white-space:nowrap}}
-#msg{{margin-top:8px;padding:11px 14px;border-radius:8px;font-size:.9rem;
-  text-align:center;display:none;font-weight:500}}
-#msg.ok  {{background:#d4edda;color:#155724;display:block}}
-#msg.err {{background:#f8d7da;color:#721c24;display:block}}
-#msg.info{{background:#cce5ff;color:#004085;display:block}}
-</style>
-</head>
-<body>
-<button id="btn" onclick="toggle()">📷&nbsp; Scan Barcode / QR</button>
-<div id="cam-box">
-  <video id="vid" autoplay playsinline muted></video>
-  <div id="aim"></div>
-  <div id="hint">Centre barcode or QR in the box</div>
-</div>
-<div id="msg"></div>
-
-<script type="module">
-import {{ BrowserMultiFormatReader }} from 'https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/esm/index.min.js';
-
-const CATALOG = {catalog_json};
-const reader  = new BrowserMultiFormatReader();
-let active    = false;
-let cooldown  = false;
-let controls  = null;
-
-const btn = document.getElementById('btn');
-const box = document.getElementById('cam-box');
-const vid = document.getElementById('vid');
-const msg = document.getElementById('msg');
-
-function setMsg(t, c) {{ msg.className = c; msg.textContent = t; }}
-function toggle() {{ active ? stop() : start(); }}
-
-async function start() {{
-  setMsg('Opening camera…', 'info');
-  try {{
-    const devices = await BrowserMultiFormatReader.listVideoInputDevices();
-    // Prefer back camera
-    const device  = devices.find(d => /back|rear|environment/i.test(d.label)) || devices[devices.length - 1];
-    const deviceId = device ? device.deviceId : undefined;
-
-    controls = await reader.decodeFromVideoDevice(deviceId, vid, (result, err) => {{
-      if (result && !cooldown) handleScan(result.getText());
-    }});
-
-    active = true;
-    box.classList.add('active');
-    btn.classList.add('on');
-    btn.textContent = '⏹  Stop Scanner';
-    msg.className = '';
-  }} catch(e) {{
-    setMsg('Camera error: ' + e.message, 'err');
-  }}
-}}
-
-function stop() {{
-  if (controls) {{ controls.stop(); controls = null; }}
-  active = false;
-  box.classList.remove('active');
-  btn.classList.remove('on');
-  btn.textContent = '📷  Scan Barcode / QR';
-  msg.className = '';
-}}
-
-function handleScan(raw) {{
-  // Accept plain product number OR full URL with ?product_number=
-  let pid = null;
-  try {{
-    const u = new URL(raw);
-    pid = u.searchParams.get('product_number');
-  }} catch(_) {{
-    pid = raw.trim();
-  }}
-
-  if (!pid || !(pid in CATALOG)) {{
-    setMsg('Not recognised: ' + raw.slice(0, 30), 'err');
-    return;
-  }}
-
-  const qty = CATALOG[pid];
-  cooldown = true;
-  setMsg('✅ ' + pid + '  ×' + qty + ' — scan next item', 'ok');
-
-  // Post to parent — no navigation, camera stays alive
-  window.parent.postMessage({{ type: 'barcode_scanned', pid, qty }}, '*');
-
-  setTimeout(() => {{
-    cooldown = false;
-    if (active) setMsg('Ready — scan next item', 'info');
-  }}, 2000);
-}}
-</script>
-</body>
-</html>"""
-
-# Parent-side listener injected into Streamlit page
-# Writes scanned value into the hidden text input via DOM manipulation
-st.markdown("""
-<script>
-(function() {
-  function handleMsg(e) {
-    if (!e.data || e.data.type !== 'barcode_scanned') return;
-    const val = e.data.pid + ':' + e.data.qty;
-    // Find the hidden input by its aria-label
-    const allInputs = document.querySelectorAll('input[type="text"]');
-    for (const inp of allInputs) {
-      const label = inp.closest('[data-testid="stTextInput"]');
-      if (label && label.querySelector('label') &&
-          label.querySelector('label').textContent.includes('__barcode_bridge')) {
-        const nativeInput = Object.getOwnPropertyDescriptor(
-          window.HTMLInputElement.prototype, 'value');
-        nativeInput.set.call(inp, val);
-        inp.dispatchEvent(new Event('input', { bubbles: true }));
-        break;
-      }
-    }
-  }
-  window.addEventListener('message', handleMsg);
-})();
-</script>
-""", unsafe_allow_html=True)
-
-st.markdown("### 📷 Scanner")
-st.caption("Tap **Scan Barcode / QR**, point at any product label. Cart updates automatically — camera stays on.")
-components.html(scanner_html, height=460, scrolling=False)
-
-# Hidden bridge input — receives barcode scans from the JS postMessage listener
-bridge_val = st.text_input("__barcode_bridge", key="barcode_bridge", label_visibility="collapsed")
-
-if bridge_val and ":" in bridge_val:
-    pid, qty_str = bridge_val.split(":", 1)
-    pid = pid.strip()
-    try:
-        qty = int(qty_str.strip())
-        if pid in multiplier_map:
-            cart[pid] = qty
-            cart_upsert(cart_id, cart, orderer_name.strip())
-            st.session_state["just_added"] = pid
-            st.session_state["barcode_bridge"] = ""   # clear input
-            st.rerun()
-    except ValueError:
-        pass
-
-st.divider()
-
-# ── Cart ───────────────────────────────────────────────────────────────────────
+# ── Cart — live from Supabase ─────────────────────────────────────────────────
 st.markdown("### 🛒 Cart")
 
 order_items = []
@@ -337,7 +186,6 @@ if order_items:
         },
         key="cart_editor",
     )
-    # Sync manual edits to Supabase
     changed = False
     for _, r in edited.iterrows():
         pid, new_qty = str(r["product_number"]), int(r["qty"])
@@ -348,15 +196,13 @@ if order_items:
         cart_upsert(cart_id, cart, orderer_name.strip())
 
     if st.button("🧹 Clear cart"):
-        cart_delete(cart_id)
-        st.session_state["cart_id"] = str(uuid.uuid4())[:8]
-        st.query_params.update({"cart_id": st.session_state["cart_id"]})
+        cart_clear(cart_id)
+        st.query_params.update({"cart_id": cart_id})
         st.rerun()
 else:
-    st.caption("Cart is empty — scan a barcode to add items.")
+    st.caption("Cart is empty — scan item barcodes to add.")
 
 st.divider()
-
 notes = st.text_area("Notes (optional)", placeholder="Any extra context…", height=80)
 
 # ── Submit ─────────────────────────────────────────────────────────────────────
@@ -402,7 +248,7 @@ if submitted:
                 ]
                 notes_html = f"<p><strong>Notes:</strong> {notes}</p>" if notes.strip() else ""
                 body = f"""<html><body>
-<p><strong>📱 New scan order at {when_str}</strong><br>Ordered by: {orderer}</p>
+<p><strong>📱 Scan order [{cart_id}] at {when_str}</strong><br>Ordered by: {orderer}</p>
 <p><strong>Details:</strong><br>{"<br>".join(details_lines)}</p>
 <p><strong>Product:</strong><br>{"<br>".join(group_lines)}</p>
 {notes_html}
@@ -413,16 +259,13 @@ if submitted:
                 except Exception as e:
                     email_error = str(e)
 
-        cart_delete(cart_id)
+        cart_clear(cart_id)
         st.success("✅ Order submitted!")
-        st.markdown(f"**Time:** {when_str}  |  **By:** {orderer}")
+        st.markdown(f"**Time:** {when_str}  |  **By:** {orderer}  |  **Location:** {cart_id}")
         for it in order_items:
             st.markdown(f"- {it['item']} (#{it['product_number']}): **{it['qty']}**")
         if email_sent:
             st.info(f"📧 Email sent to {len(recipients)} recipient(s).")
         elif email_error:
             st.warning(f"Logged but email failed: {email_error}")
-
-        st.session_state["cart_id"] = str(uuid.uuid4())[:8]
-        st.query_params.update({"cart_id": st.session_state["cart_id"]})
         st.balloons()
