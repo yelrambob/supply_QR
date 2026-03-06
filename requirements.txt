@@ -1,2 +1,5 @@
+streamlit
 supabase
 qrcode[pil]
+python-barcode[images]
+Pillow
