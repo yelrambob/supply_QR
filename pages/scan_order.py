@@ -1,12 +1,13 @@
 """
 pages/scan_order.py — Quick Supply Order
 
-Scanning flow:
-  - Individual QR codes link to this page with ?product_number=X&qty=Y
-  - Each scan adds to session_state cart and clears the URL param
-  - Cart persists across reruns in session_state
-  - No iframe camera tricks needed — phone camera app handles scanning
-  - Submit works independently of anything else
+Cart is encoded in the URL as ?cart=PID:QTY,PID:QTY so it survives
+across QR code scans (each scan is a new browser navigation but carries
+the existing cart forward in the URL).
+
+Individual QR code format:  /scan_order?product_number=ABC&qty=2
+When scanned, the new item is merged into the existing cart param and
+the page reloads with the full cart in the URL. One submit = one email.
 """
 
 import streamlit as st
@@ -47,17 +48,22 @@ def read_emails() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-# ── Session state ──────────────────────────────────────────────────────────────
-if "cart" not in st.session_state:
-    st.session_state["cart"] = {}
-if "orderer_name" not in st.session_state:
-    st.session_state["orderer_name"] = ""
-if "do_clear" not in st.session_state:
-    st.session_state["do_clear"] = False
+def decode_cart(s: str) -> dict:
+    cart = {}
+    for chunk in s.split(","):
+        chunk = chunk.strip()
+        if ":" in chunk:
+            pid, qty = chunk.rsplit(":", 1)
+            try:
+                cart[pid.strip()] = max(0, int(qty))
+            except ValueError:
+                pass
+    return cart
 
-if st.session_state["do_clear"]:
-    st.session_state["cart"] = {}
-    st.session_state["do_clear"] = False
+
+def encode_cart(cart: dict) -> str:
+    return ",".join(f"{pid}:{qty}" for pid, qty in cart.items() if qty > 0)
+
 
 # ── Load data ──────────────────────────────────────────────────────────────────
 catalog = read_catalog()
@@ -74,23 +80,25 @@ multiplier_map = {
     for _, r in catalog.iterrows()
 }
 
-# ── Process incoming QR scan from URL params ───────────────────────────────────
-# This fires every time a QR code is scanned and the browser opens the URL.
-# Session state preserves the cart across these navigations.
+# ── Parse URL — merge new scan into existing cart ─────────────────────────────
 params               = st.query_params
 product_number_param = params.get("product_number", "").strip()
 qty_param            = params.get("qty", "").strip()
-just_scanned         = None
+cart_param           = params.get("cart", "").strip()
+name_param           = params.get("name", "").strip()
 
+# Start from cart already in URL
+cart = decode_cart(cart_param)
+
+# Merge newly scanned item
+just_scanned = None
 if product_number_param and product_number_param in multiplier_map:
     try:
         qty = max(1, int(qty_param)) if qty_param else multiplier_map[product_number_param]
     except ValueError:
         qty = multiplier_map[product_number_param]
-    st.session_state["cart"][product_number_param] = qty
+    cart[product_number_param] = qty
     just_scanned = product_number_param
-    # Clear params so a manual rerun doesn't re-add
-    st.query_params.clear()
 
 # ── Header ─────────────────────────────────────────────────────────────────────
 st.markdown(
@@ -98,37 +106,35 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Show scan confirmation banner if something was just scanned
 if just_scanned:
     row = catalog.loc[catalog["product_number"] == just_scanned]
-    item_name = row.iloc[0]["item"] if not row.empty else just_scanned
-    st.success(f"✅ **{item_name}** added to cart. Scan another item or submit below.")
-elif st.session_state["cart"]:
-    st.info(f"🛒 {len(st.session_state['cart'])} item(s) in cart. Scan more or submit.")
+    name = row.iloc[0]["item"] if not row.empty else just_scanned
+    st.success(f"✅ **{name}** added — {len(cart)} item(s) in cart. Scan more or submit.")
+elif cart:
+    st.info(f"🛒 {len(cart)} item(s) in cart. Scan more QR codes or submit.")
 else:
     st.markdown(
-        '<p style="text-align:center;color:#666">Scan a product QR code to add items to your cart.</p>',
+        '<p style="text-align:center;color:#666;margin-bottom:0">'
+        'Scan a product QR code to start your order.</p>',
         unsafe_allow_html=True,
     )
 
 st.divider()
 
-# ── Name ───────────────────────────────────────────────────────────────────────
+# ── Name — persisted in URL so it survives scans ──────────────────────────────
 orderer_name = st.text_input(
     "Your name (optional)",
-    value=st.session_state["orderer_name"],
+    value=name_param,
     placeholder="Leave blank to submit as Anonymous",
-    key="name_input",
 )
-st.session_state["orderer_name"] = orderer_name
 
 st.divider()
 
-# ── Cart ───────────────────────────────────────────────────────────────────────
+# ── Cart — editable table ──────────────────────────────────────────────────────
 st.markdown("### 🛒 Cart")
 
 order_items = []
-for pid, qty in st.session_state["cart"].items():
+for pid, qty in cart.items():
     if qty > 0:
         row = catalog.loc[catalog["product_number"] == pid]
         if not row.empty:
@@ -141,7 +147,7 @@ for pid, qty in st.session_state["cart"].items():
 
 if order_items:
     cart_df = pd.DataFrame(order_items)
-    edited_cart = st.data_editor(
+    edited = st.data_editor(
         cart_df,
         use_container_width=True,
         hide_index=True,
@@ -153,15 +159,22 @@ if order_items:
         },
         key="cart_editor",
     )
-    # Sync manual edits
-    for _, r in edited_cart.iterrows():
+    # Sync manual edits back into cart dict
+    for _, r in edited.iterrows():
         pid     = str(r["product_number"])
         new_qty = int(r["qty"])
-        if st.session_state["cart"].get(pid) != new_qty:
-            st.session_state["cart"][pid] = new_qty
+        cart[pid] = new_qty
+
+    # Update URL to reflect any manual qty changes
+    new_cart_str = encode_cart(cart)
+    name_str     = orderer_name.strip()
+    st.query_params.update({
+        "cart": new_cart_str,
+        **({"name": name_str} if name_str else {}),
+    })
 
     if st.button("🧹 Clear cart"):
-        st.session_state["do_clear"] = True
+        st.query_params.clear()
         st.rerun()
 else:
     st.caption("Cart is empty — scan a product QR code to add items.")
@@ -171,7 +184,7 @@ st.divider()
 # ── Notes ─────────────────────────────────────────────────────────────────────
 notes = st.text_area("Notes (optional)", placeholder="Any extra context…", height=80)
 
-# ── Submit ────────────────────────────────────────────────────────────────────
+# ── Submit — one email with ALL items ─────────────────────────────────────────
 submitted = st.button("🧾 Submit Order", type="primary", use_container_width=True)
 
 if submitted:
@@ -236,6 +249,6 @@ if submitted:
         elif email_error:
             st.warning(f"Logged but email failed: {email_error}")
 
-        st.session_state["cart"] = {}
-        st.session_state["orderer_name"] = ""
+        # Clear cart
+        st.query_params.clear()
         st.balloons()
