@@ -608,7 +608,7 @@ with tabs[4]:
                         bc_buf.seek(0)
                         bc_img   = _Image.open(bc_buf)
                         bc_draw_h = LABEL_H * 0.44
-                        bc_draw_w = min(LABEL_W - PAD*2, bc_draw_h * bc_img.size[0] / bc_img.size[1])
+                        bc_draw_w = LABEL_W * 0.75
                         bc_x = x + (LABEL_W - bc_draw_w) / 2
                         bc_y = y + 0.285 * _inch
                         out_buf = _io.BytesIO()
