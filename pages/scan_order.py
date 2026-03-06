@@ -166,7 +166,7 @@ video{{width:100%;display:block;max-height:300px;object-fit:cover}}
 </div>
 <div id="msg"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0/umd/index.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 <script>
 const CATALOG    = {catalog_json};
 const CART_ID    = "{cart_id}";
@@ -174,14 +174,16 @@ const SB_URL     = "{sb_url}";
 const SB_KEY     = "{sb_key}";
 const CART_TABLE = "{CART_TABLE}";
 
-const reader   = new ZXing.BrowserMultiFormatReader();
-let active     = false;
-let cooldown   = false;
-let controls   = null;
+let stream   = null;
+let active   = false;
+let cooldown = false;
+let raf      = null;
 
 const btn = document.getElementById('btn');
 const box = document.getElementById('cam-box');
 const vid = document.getElementById('vid');
+const cvs = document.getElementById('cvs');
+const ctx = cvs.getContext('2d');
 const msg = document.getElementById('msg');
 
 function setMsg(t, c) {{ msg.className = c; msg.textContent = t; }}
@@ -190,30 +192,44 @@ function toggle() {{ active ? stop() : start(); }}
 async function start() {{
   setMsg('Opening camera…', 'info');
   try {{
-    const devices  = await ZXing.BrowserMultiFormatReader.listVideoInputDevices();
-    const back     = devices.find(d => /back|rear|environment/i.test(d.label));
-    const deviceId = (back || devices[devices.length - 1])?.deviceId;
-    controls = await reader.decodeFromVideoDevice(
-      deviceId, vid,
-      (result, err) => {{ if (result && !cooldown) handleScan(result.getText()); }}
-    );
+    stream = await navigator.mediaDevices.getUserMedia({{
+      video: {{ facingMode: {{ ideal: 'environment' }}, width: {{ ideal: 1280 }}, height: {{ ideal: 720 }} }}
+    }});
+    vid.srcObject = stream;
+    await vid.play();
     active = true;
     box.classList.add('active');
     btn.classList.add('on');
     btn.textContent = '⏹ Stop Scanner';
     msg.className = '';
+    tick();
   }} catch(e) {{
     setMsg('Camera error: ' + e.message, 'err');
   }}
 }}
 
 function stop() {{
-  if (controls) {{ controls.stop(); controls = null; }}
   active = false;
+  if (raf) cancelAnimationFrame(raf);
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null;
   box.classList.remove('active');
   btn.classList.remove('on');
   btn.textContent = '📷 Scan Item Barcode';
   msg.className = '';
+}}
+
+function tick() {{
+  if (!active) return;
+  if (vid.readyState === vid.HAVE_ENOUGH_DATA) {{
+    cvs.width  = vid.videoWidth;
+    cvs.height = vid.videoHeight;
+    ctx.drawImage(vid, 0, 0, cvs.width, cvs.height);
+    const d    = ctx.getImageData(0, 0, cvs.width, cvs.height);
+    const code = jsQR(d.data, d.width, d.height, {{ inversionAttempts: 'dontInvert' }});
+    if (code && !cooldown) handleScan(code.data);
+  }}
+  raf = requestAnimationFrame(tick);
 }}
 
 async function handleScan(raw) {{
