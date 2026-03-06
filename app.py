@@ -595,8 +595,8 @@ with tabs[4]:
                     PAD = 5
 
                     # Product name
-                    c.setFont("Helvetica-Bold", 7.5)
-                    max_chars = int((LABEL_W - PAD*2) / 4.3)
+                    c.setFont("Helvetica-Bold", 9)
+                    max_chars = int((LABEL_W - PAD*2) / 5.2)
                     dname = item_name if len(item_name) <= max_chars else item_name[:max_chars-1] + "..."
                     c.drawString(x + PAD, y + LABEL_H - PAD - 9, dname)
 
@@ -607,7 +607,7 @@ with tabs[4]:
                         bc.write(bc_buf, options={"write_text": False, "module_height": 10.0, "quiet_zone": 2.0})
                         bc_buf.seek(0)
                         bc_img   = _Image.open(bc_buf)
-                        bc_draw_h = LABEL_H * 0.33
+                        bc_draw_h = LABEL_H * 0.44
                         bc_draw_w = min(LABEL_W - PAD*2, bc_draw_h * bc_img.size[0] / bc_img.size[1])
                         bc_x = x + (LABEL_W - bc_draw_w) / 2
                         bc_y = y + 0.285 * _inch
@@ -619,11 +619,11 @@ with tabs[4]:
                         pass
 
                     # Product number
-                    c.setFont("Helvetica", 6)
+                    c.setFont("Helvetica", 7.5)
                     c.drawCentredString(x + LABEL_W/2, y + 0.21 * _inch, pid)
 
                     # Multiplier line
-                    c.setFont("Helvetica", 6.5)
+                    c.setFont("Helvetica", 8)
                     c.drawString(x + PAD, y + PAD, f"For a single box order:  {multiplier}")
 
                 c.save()
