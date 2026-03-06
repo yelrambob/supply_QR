@@ -134,6 +134,7 @@ scanner_html = f"""<!DOCTYPE html>
 <html>
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 <style>
 *{{box-sizing:border-box;margin:0;padding:0}}
 body{{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:transparent;padding:4px 2px}}
@@ -144,6 +145,7 @@ body{{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:transpa
   overflow:hidden;background:#000;width:100%}}
 #cam-box.active{{display:block}}
 video{{width:100%;display:block;max-height:300px;object-fit:cover}}
+canvas{{display:none}}
 #aim{{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
   width:80%;height:35%;border:3px solid rgba(255,255,255,.9);border-radius:6px;
   box-shadow:0 0 0 9999px rgba(0,0,0,.45);pointer-events:none}}
@@ -161,12 +163,12 @@ video{{width:100%;display:block;max-height:300px;object-fit:cover}}
 <button id="btn" onclick="toggle()">📷 Scan Item Barcode</button>
 <div id="cam-box">
   <video id="vid" autoplay playsinline muted></video>
+  <canvas id="cvs"></canvas>
   <div id="aim"></div>
-  <div id="hint">Centre barcode or QR in the box</div>
+  <div id="hint">Centre QR code in the box</div>
 </div>
 <div id="msg"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 <script>
 const CATALOG    = {catalog_json};
 const CART_ID    = "{cart_id}";
@@ -249,23 +251,19 @@ async function handleScan(raw) {{
   setMsg('Saving ' + pid + '…', 'info');
 
   try {{
-    // Fetch current cart
     const getRes = await fetch(
-      `${{SB_URL}}/rest/v1/${{CART_TABLE}}?cart_id=eq.${{encodeURIComponent(CART_ID)}}&select=items`,
-      {{ headers: {{ apikey: SB_KEY, Authorization: `Bearer ${{SB_KEY}}` }} }}
+      SB_URL + '/rest/v1/' + CART_TABLE + '?cart_id=eq.' + encodeURIComponent(CART_ID) + '&select=items',
+      {{ headers: {{ apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY }} }}
     );
     const rows  = await getRes.json();
-    const items = rows.length && rows[0].items ? JSON.parse(rows[0].items) : {{}};
+    const items = (rows.length && rows[0].items) ? JSON.parse(rows[0].items) : {{}};
+    items[pid]  = qty;
 
-    // Merge item
-    items[pid] = qty;
-
-    // Upsert back
-    const putRes = await fetch(`${{SB_URL}}/rest/v1/${{CART_TABLE}}`, {{
+    const putRes = await fetch(SB_URL + '/rest/v1/' + CART_TABLE, {{
       method: 'POST',
       headers: {{
         apikey: SB_KEY,
-        Authorization: `Bearer ${{SB_KEY}}`,
+        Authorization: 'Bearer ' + SB_KEY,
         'Content-Type': 'application/json',
         Prefer: 'resolution=merge-duplicates',
       }},
