@@ -428,12 +428,20 @@ with tabs[4]:
     else:
         # --- App URL configuration ---
         st.markdown("### ⚙️ Setup")
+
+        # Auto-detect base URL from browser request headers
+        try:
+            host = st.context.headers.get("host", "")
+            detected_url = ("https://" + host) if host and not host.startswith("http") else host
+        except Exception:
+            detected_url = "https://qrsupply.streamlit.app"
+
         app_base_url = st.text_input(
             "Your Streamlit app's public URL",
-            placeholder="https://your-app.streamlit.app",
+            value=detected_url or "https://qrsupply.streamlit.app",
             help=(
-                "Enter the base URL where your app is hosted. "
-                "The QR codes will point to: <your-url>/scan_order?item=...&qty=..."
+                "Auto-detected from your browser. Edit only if incorrect. "
+                "QR codes will link to: <your-url>/scan_order?product_number=...&qty=..."
             ),
         )
 
