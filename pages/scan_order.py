@@ -7,25 +7,23 @@ URL params:
   ?product_number=<pid>&qty=<recommended_qty>
 
 Anyone who scans the QR code lands here, enters their name,
-adjusts the quantity if needed, and submits — which logs the
-order and fires the same email as the main app.
+adjusts quantities, adds more items, and submits — which logs
+the order and fires the same email as the main app.
 """
 
 import streamlit as st
 import pandas as pd
 import zoneinfo
-from datetime import datetime
 from pathlib import Path
 import sys
 import re
 
-# ── Make sure the parent package is importable when Streamlit
-#    runs this file directly from the pages/ folder ──────────
+# ── Make sure the parent package is importable ──────────────
 APP_DIR = Path(__file__).resolve().parent.parent
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
-from db.supabase_client import append_log, read_log
+from db.supabase_client import append_log
 from data.catalog import read_catalog
 from services.email_service import send_email, smtp_ok, all_recipients
 
@@ -38,9 +36,6 @@ st.set_page_config(
 # ── Paths ────────────────────────────────────────────────────
 DATA_DIR = APP_DIR / "data"
 EMAILS_PATH = DATA_DIR / "emails.csv"
-
-# ── Helpers ─────────────────────────────────────────────────
-NYC = zoneinfo.ZoneInfo("America/New_York")
 
 @st.cache_data
 def read_emails() -> pd.DataFrame:
@@ -59,6 +54,10 @@ def read_emails() -> pd.DataFrame:
             rows.append({"name": str(r.get("name", "")), "email": m.group(1)})
     return pd.DataFrame(rows)
 
+# ── Session state ────────────────────────────────────────────
+if "scan_qty_map" not in st.session_state:
+    st.session_state["scan_qty_map"] = {}
+
 # ── URL query params ─────────────────────────────────────────
 params = st.query_params
 product_number_param = params.get("product_number", "")
@@ -69,7 +68,7 @@ try:
 except (ValueError, TypeError):
     default_qty = 1
 
-# ── Load catalog ─────────────────────────────────────────────
+# ── Load data ────────────────────────────────────────────────
 catalog = read_catalog()
 emails_df = read_emails()
 
@@ -79,12 +78,9 @@ if catalog.empty:
 
 catalog["product_number"] = catalog["product_number"].astype(str)
 
-# ── Find the pre-selected item (if any) ─────────────────────
-preselected_row = None
-if product_number_param:
-    match = catalog.loc[catalog["product_number"] == str(product_number_param)]
-    if not match.empty:
-        preselected_row = match.iloc[0]
+# ── Pre-load QR item into qty_map on first load ──────────────
+if product_number_param and product_number_param not in st.session_state["scan_qty_map"]:
+    st.session_state["scan_qty_map"][product_number_param] = default_qty
 
 # ══════════════════════════════════════════════════════════════
 # UI
@@ -93,17 +89,7 @@ if product_number_param:
 st.markdown(
     """
     <style>
-    .scan-header {
-        text-align: center;
-        padding: 1rem 0 0.5rem 0;
-    }
-    .item-card {
-        background: #f8f9fa;
-        border-radius: 12px;
-        padding: 1.2rem 1.5rem;
-        margin-bottom: 1rem;
-        border: 1px solid #dee2e6;
-    }
+    .scan-header { text-align: center; padding: 1rem 0 0.5rem 0; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -126,88 +112,76 @@ orderer_name = st.text_input(
 
 st.divider()
 
-# ── Item selection ───────────────────────────────────────────
-if preselected_row is not None:
-    # Single-item mode: came from a specific QR code
-    st.markdown("### Item from QR code")
+# ── Item table ───────────────────────────────────────────────
+st.markdown("### 🛒 Select Items to Order")
+st.caption("The scanned item is pre-filled. Add more items by setting their quantity above 0.")
 
-    item_name = str(preselected_row["item"])
-    pid = str(preselected_row["product_number"])
-    price = preselected_row.get("price", None)
-    current_qty = preselected_row.get("current_qty", None)
+table_rows = []
+for _, row in catalog.iterrows():
+    pid = str(row["product_number"])
+    rec_qty = int(row.get("items_per_order", 1) or 1)
+    current_in_map = st.session_state["scan_qty_map"].get(pid, 0)
+    table_rows.append({
+        "product_number": pid,
+        "item": str(row["item"]),
+        "qty": current_in_map,
+        "rec_qty": rec_qty,
+        "price": row.get("price", None),
+        "current_qty": row.get("current_qty", None),
+    })
 
-    st.markdown(
-        f"""
-        <div class="item-card">
-        <strong style="font-size:1.15rem">{item_name}</strong><br>
-        <span style="color:#6c757d">Product #: <code>{pid}</code></span>
-        {"<br>💵 $" + f"{float(price):.2f}" + "/unit" if price else ""}
-        {"<br>🗃️ Currently in stock: " + str(int(current_qty)) if current_qty is not None else ""}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+table_df = pd.DataFrame(table_rows)
 
-    order_qty = st.number_input(
-        "Quantity to order",
-        min_value=1,
-        value=default_qty,
-        step=1,
-        help=f"Recommended quantity: {default_qty}",
-    )
+edited_df = st.data_editor(
+    table_df,
+    use_container_width=True,
+    hide_index=True,
+    column_config={
+        "product_number": st.column_config.TextColumn("Product #", disabled=True),
+        "item": st.column_config.TextColumn("Item", disabled=True),
+        "qty": st.column_config.NumberColumn("Qty to Order", min_value=0, step=1),
+        "rec_qty": st.column_config.NumberColumn("Rec. Qty", disabled=True),
+        "price": st.column_config.NumberColumn("Price ($)", disabled=True),
+        "current_qty": st.column_config.NumberColumn("In Stock", disabled=True),
+    },
+    key="scan_editor",
+)
 
-    order_items = [{"item": item_name, "product_number": pid, "qty": order_qty}]
+# Sync edits back to session state
+rerun_needed = False
+for _, r in edited_df.iterrows():
+    pid = str(r["product_number"])
+    new_qty = int(r["qty"])
+    if st.session_state["scan_qty_map"].get(pid) != new_qty:
+        st.session_state["scan_qty_map"][pid] = new_qty
+        rerun_needed = True
+if rerun_needed:
+    st.rerun()
 
+# Build current order preview
+order_items = []
+for pid, qty in st.session_state["scan_qty_map"].items():
+    if qty > 0:
+        row = catalog.loc[catalog["product_number"] == pid]
+        if not row.empty:
+            order_items.append({
+                "item": row.iloc[0]["item"],
+                "product_number": pid,
+                "qty": qty,
+            })
+
+if order_items:
+    st.markdown("### 🧾 Order Summary")
+    st.dataframe(pd.DataFrame(order_items), hide_index=True, use_container_width=True)
+    if st.button("🧹 Clear all"):
+        st.session_state["scan_qty_map"] = {}
+        st.rerun()
 else:
-    # Multi-item mode: generic scan or direct URL visit
-    st.markdown("### Select items to order")
-    st.caption("Adjust quantities to 0 to skip an item.")
-
-    item_rows = []
-    for _, row in catalog.iterrows():
-        rec = int(row.get("items_per_order", 1) or 1)
-        item_rows.append(
-            {
-                "order": False,
-                "item": str(row["item"]),
-                "product_number": str(row["product_number"]),
-                "qty": rec,
-                "price": row.get("price", None),
-                "current_qty": row.get("current_qty", None),
-            }
-        )
-
-    item_df = pd.DataFrame(item_rows)
-
-    edited_df = st.data_editor(
-        item_df,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "order": st.column_config.CheckboxColumn("Order?"),
-            "item": st.column_config.TextColumn("Item", disabled=True),
-            "product_number": st.column_config.TextColumn("Product #", disabled=True),
-            "qty": st.column_config.NumberColumn("Qty", min_value=0, step=1),
-            "price": st.column_config.NumberColumn("Price ($)", disabled=True),
-            "current_qty": st.column_config.NumberColumn("In Stock", disabled=True),
-        },
-        key="scan_editor",
-    )
-
-    order_items = []
-    for _, r in edited_df.iterrows():
-        if r["order"] and int(r["qty"]) > 0:
-            order_items.append(
-                {
-                    "item": r["item"],
-                    "product_number": r["product_number"],
-                    "qty": int(r["qty"]),
-                }
-            )
+    st.caption("No items selected yet.")
 
 st.divider()
 
-# ── Notes (optional) ─────────────────────────────────────────
+# ── Notes ────────────────────────────────────────────────────
 notes = st.text_area(
     "Notes (optional)",
     placeholder="Any additional context for this order...",
@@ -215,54 +189,87 @@ notes = st.text_area(
 )
 
 # ── Submit ───────────────────────────────────────────────────
-st.markdown("")  # spacing
-
 submitted = st.button("🧾 Submit Order", type="primary", use_container_width=True)
 
 if submitted:
     if not orderer_name.strip():
         st.error("Please enter your name before submitting.")
     elif not order_items:
-        st.error("No items selected. Please select at least one item with a quantity > 0.")
+        st.error("No items selected. Set at least one item qty above 0.")
     else:
+        orderer = orderer_name.strip()
         order_df = pd.DataFrame(order_items)
 
         with st.spinner("Logging order..."):
-            when_str = append_log(order_df, orderer_name.strip())
+            when_str = append_log(order_df, orderer)
 
-        # ── Email ────────────────────────────────────────────
+        # ── Email — exact same logic as main app ─────────────
         email_sent = False
         email_error = None
+        recipients = []
 
         if smtp_ok():
             recipients = all_recipients(emails_df)
             if recipients:
+                product_groups = []
+                current_group = []
+                running_total = 0.0
                 details_lines = []
-                for r in order_items:
-                    details_lines.append(
-                        f"<label><input type='checkbox'/> "
-                        f"- {r['item']} (#{r['product_number']}): {r['qty']}</label>"
+
+                for it in order_items:
+                    pid = it["product_number"]
+                    qty = it["qty"]
+                    row = catalog.loc[catalog["product_number"].astype(str) == str(pid)]
+                    if not row.empty:
+                        item_name = row.iloc[0]["item"]
+                        price = float(row.iloc[0].get("price", 0) or 0)
+                        total = qty * price
+
+                        if running_total + total > 4999 and current_group:
+                            product_groups.append((current_group.copy(), running_total))
+                            current_group = []
+                            running_total = 0.0
+
+                        running_total += total
+                        current_group.append(pid)
+                        details_lines.append(
+                            f"<label><input type='checkbox'/> - {item_name} (#{pid}): {qty}</label>"
+                        )
+
+                if current_group:
+                    product_groups.append((current_group, running_total))
+
+                group_lines = []
+                for group, subtotal in product_groups:
+                    product_str = ", ".join(f'"{p}"' for p in group)
+                    group_lines.append(
+                        f"<label><input type='checkbox'/> {product_str} = ${subtotal:,.0f}</label>"
                     )
 
-                notes_html = (
-                    f"<p><strong>Notes:</strong> {notes}</p>" if notes.strip() else ""
-                )
+                notes_html = f"<p><strong>Notes:</strong> {notes}</p>" if notes.strip() else ""
 
                 body = f"""
-                <html><body>
-                <p><strong>📱 Quick scan order at {when_str}</strong><br>
-                Ordered by: {orderer_name.strip()}</p>
+                <html>
+                <body>
+                <p><strong>📱 New scan order at {when_str}</strong><br>
+                Ordered by: {orderer}</p>
 
-                <p><strong>Items:</strong><br>
-                {"<br>".join(details_lines)}</p>
+                <p><strong>Details:</strong><br>
+                {"<br>".join(details_lines)}
+                </p>
+
+                <p><strong>Product:</strong><br>
+                {"<br>".join(group_lines)}
+                </p>
 
                 {notes_html}
-                </body></html>
+                </body>
+                </html>
                 """
 
                 try:
                     send_email(
-                        f"Supply Order — {orderer_name.strip()}",
+                        "Supply Order Logged",
                         body,
                         recipients,
                     )
@@ -273,16 +280,17 @@ if submitted:
         # ── Confirmation ─────────────────────────────────────
         st.success("✅ Order submitted successfully!")
         st.markdown(f"**Order time:** {when_str}")
-        st.markdown(f"**Submitted by:** {orderer_name.strip()}")
+        st.markdown(f"**Submitted by:** {orderer}")
         st.markdown("**Items ordered:**")
         for it in order_items:
             st.markdown(f"- {it['item']} (#{it['product_number']}): **{it['qty']}**")
 
         if email_sent:
-            st.info(f"📧 Confirmation email sent to {len(recipients)} recipient(s).")
+            st.info(f"📧 Email sent to {len(recipients)} recipient(s).")
         elif email_error:
             st.warning(f"Order logged but email failed: {email_error}")
         elif not smtp_ok():
             st.caption("(Email not configured — order is logged in the database.)")
 
+        st.session_state["scan_qty_map"] = {}
         st.balloons()
