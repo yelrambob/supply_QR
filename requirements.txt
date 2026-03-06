@@ -4,3 +4,4 @@ qrcode[pil]
 python-barcode[images]
 Pillow
 python-barcode[images]
+reportlab
