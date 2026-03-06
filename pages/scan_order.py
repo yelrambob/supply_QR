@@ -1,14 +1,15 @@
 """
 pages/scan_order.py — Quick Supply Order
-Scanner uses components.html with a hidden st.text_input bridge.
-JS writes scanned product_number into the input field value,
-which Streamlit picks up on the next natural interaction.
-No custom component, no page reloads, camera stays alive.
+
+Scanning flow:
+  - Individual QR codes link to this page with ?product_number=X&qty=Y
+  - Each scan adds to session_state cart and clears the URL param
+  - Cart persists across reruns in session_state
+  - No iframe camera tricks needed — phone camera app handles scanning
+  - Submit works independently of anything else
 """
 
-import json
 import streamlit as st
-import streamlit.components.v1 as components
 import pandas as pd
 from pathlib import Path
 import sys
@@ -49,6 +50,8 @@ def read_emails() -> pd.DataFrame:
 # ── Session state ──────────────────────────────────────────────────────────────
 if "cart" not in st.session_state:
     st.session_state["cart"] = {}
+if "orderer_name" not in st.session_state:
+    st.session_state["orderer_name"] = ""
 if "do_clear" not in st.session_state:
     st.session_state["do_clear"] = False
 
@@ -71,199 +74,53 @@ multiplier_map = {
     for _, r in catalog.iterrows()
 }
 
-# ── URL params — external QR link ─────────────────────────────────────────────
+# ── Process incoming QR scan from URL params ───────────────────────────────────
+# This fires every time a QR code is scanned and the browser opens the URL.
+# Session state preserves the cart across these navigations.
 params               = st.query_params
 product_number_param = params.get("product_number", "").strip()
 qty_param            = params.get("qty", "").strip()
+just_scanned         = None
 
-if product_number_param:
+if product_number_param and product_number_param in multiplier_map:
     try:
-        qty = max(1, int(qty_param)) if qty_param else multiplier_map.get(product_number_param, 1)
+        qty = max(1, int(qty_param)) if qty_param else multiplier_map[product_number_param]
     except ValueError:
-        qty = multiplier_map.get(product_number_param, 1)
+        qty = multiplier_map[product_number_param]
     st.session_state["cart"][product_number_param] = qty
+    just_scanned = product_number_param
+    # Clear params so a manual rerun doesn't re-add
     st.query_params.clear()
 
 # ── Header ─────────────────────────────────────────────────────────────────────
 st.markdown(
-    '<h2 style="text-align:center;padding:0.5rem 0 0.1rem">📱 Quick Supply Order</h2>'
-    '<p style="text-align:center;color:#666;margin-bottom:0">'
-    'Tap Scan Item, point at QR codes to build your cart, then submit.</p>',
+    '<h2 style="text-align:center;padding:0.5rem 0 0.1rem">📱 Quick Supply Order</h2>',
     unsafe_allow_html=True,
 )
+
+# Show scan confirmation banner if something was just scanned
+if just_scanned:
+    row = catalog.loc[catalog["product_number"] == just_scanned]
+    item_name = row.iloc[0]["item"] if not row.empty else just_scanned
+    st.success(f"✅ **{item_name}** added to cart. Scan another item or submit below.")
+elif st.session_state["cart"]:
+    st.info(f"🛒 {len(st.session_state['cart'])} item(s) in cart. Scan more or submit.")
+else:
+    st.markdown(
+        '<p style="text-align:center;color:#666">Scan a product QR code to add items to your cart.</p>',
+        unsafe_allow_html=True,
+    )
+
 st.divider()
 
+# ── Name ───────────────────────────────────────────────────────────────────────
 orderer_name = st.text_input(
     "Your name (optional)",
+    value=st.session_state["orderer_name"],
     placeholder="Leave blank to submit as Anonymous",
+    key="name_input",
 )
-st.divider()
-
-# ── Scanner ────────────────────────────────────────────────────────────────────
-# The scanner is a self-contained HTML page rendered in an iframe via components.html.
-# It does NOT navigate or reload. Instead, when it detects a QR code it:
-#   1. Shows a success message inside the iframe
-#   2. Posts the scanned pid to the PARENT window via postMessage
-# The parent page has a tiny <script> injected via st.markdown that listens for
-# that message and submits a hidden form, which triggers Streamlit's form submit
-# and passes the pid through without reloading the iframe.
-
-catalog_json = json.dumps(multiplier_map)
-
-scanner_html = f"""<!DOCTYPE html>
-<html>
-<head>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
-<style>
-*{{box-sizing:border-box;margin:0;padding:0}}
-body{{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:transparent;padding:4px 2px}}
-#btn{{width:100%;padding:15px;font-size:1.05rem;font-weight:700;background:#0068c9;
-  color:#fff;border:none;border-radius:10px;cursor:pointer;transition:background .15s}}
-#btn.on{{background:#c0392b}}
-#btn:active{{opacity:.85}}
-#cam-box{{display:none;position:relative;margin-top:10px;border-radius:12px;
-  overflow:hidden;background:#000;width:100%}}
-#cam-box.active{{display:block}}
-video{{width:100%;display:block;max-height:300px;object-fit:cover}}
-canvas{{display:none}}
-#aim{{position:absolute;top:50%;left:50%;transform:translate(-50%,-52%);
-  width:60%;aspect-ratio:1;border:3px solid rgba(255,255,255,.9);border-radius:10px;
-  box-shadow:0 0 0 9999px rgba(0,0,0,.5);pointer-events:none}}
-#hint{{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);
-  background:rgba(0,0,0,.65);color:#fff;font-size:.78rem;padding:4px 12px;
-  border-radius:20px;white-space:nowrap}}
-#msg{{margin-top:8px;padding:11px 14px;border-radius:8px;font-size:.9rem;
-  text-align:center;display:none;font-weight:500}}
-#msg.ok  {{background:#d4edda;color:#155724;display:block}}
-#msg.err {{background:#f8d7da;color:#721c24;display:block}}
-#msg.info{{background:#cce5ff;color:#004085;display:block}}
-</style>
-</head>
-<body>
-<button id="btn" onclick="toggle()">📷&nbsp; Scan Item</button>
-<div id="cam-box">
-  <video id="vid" autoplay playsinline muted></video>
-  <canvas id="cvs"></canvas>
-  <div id="aim"></div>
-  <div id="hint">Align QR code inside the box</div>
-</div>
-<div id="msg"></div>
-
-<script>
-const CATALOG = {catalog_json};
-let stream=null, active=false, raf=null, cooldown=false;
-const vid=document.getElementById("vid");
-const cvs=document.getElementById("cvs");
-const ctx=cvs.getContext("2d");
-const box=document.getElementById("cam-box");
-const btn=document.getElementById("btn");
-const msg=document.getElementById("msg");
-
-function setMsg(t,c){{msg.className=c;msg.textContent=t;}}
-function toggle(){{active?stop():start();}}
-
-async function start(){{
-  setMsg("Opening camera…","info");
-  try{{
-    stream=await navigator.mediaDevices.getUserMedia({{
-      video:{{facingMode:{{ideal:"environment"}},width:{{ideal:1280}},height:{{ideal:720}}}}
-    }});
-    vid.srcObject=stream;
-    await vid.play();
-    active=true;
-    box.classList.add("active");
-    btn.classList.add("on");
-    btn.textContent="⏹  Stop Scanner";
-    msg.className="";
-    tick();
-  }}catch(e){{setMsg("Camera error: "+e.message,"err");}}
-}}
-
-function stop(){{
-  active=false;
-  if(raf)cancelAnimationFrame(raf);
-  if(stream)stream.getTracks().forEach(t=>t.stop());
-  stream=null;
-  box.classList.remove("active");
-  btn.classList.remove("on");
-  btn.textContent="📷  Scan Item";
-  msg.className="";
-}}
-
-function tick(){{
-  if(!active)return;
-  if(vid.readyState===vid.HAVE_ENOUGH_DATA){{
-    cvs.width=vid.videoWidth; cvs.height=vid.videoHeight;
-    ctx.drawImage(vid,0,0,cvs.width,cvs.height);
-    const d=ctx.getImageData(0,0,cvs.width,cvs.height);
-    const code=jsQR(d.data,d.width,d.height,{{inversionAttempts:"dontInvert"}});
-    if(code&&!cooldown)handleQR(code.data);
-  }}
-  raf=requestAnimationFrame(tick);
-}}
-
-function handleQR(raw){{
-  let pid=null;
-  try{{const u=new URL(raw);pid=u.searchParams.get("product_number");}}
-  catch(_){{pid=raw.trim();}}
-  if(!pid)return;
-  if(!(pid in CATALOG)){{setMsg("Product #"+pid+" not in catalog","err");return;}}
-  const qty=CATALOG[pid];
-  cooldown=true;
-  setMsg("✅ Added #"+pid+" — qty "+qty,"ok");
-  // Send to parent Streamlit window — NO navigation, iframe stays alive
-  window.parent.postMessage({{type:"qr_scanned",pid:pid,qty:qty}},"*");
-  setTimeout(()=>{{
-    cooldown=false;
-    if(active)setMsg("Ready — scan next item","info");
-  }},2000);
-}}
-</script>
-</body>
-</html>"""
-
-# Inject a listener in the parent page that catches postMessage from the scanner
-# and sets a hidden query param, then calls Streamlit's rerun via a button click
-st.markdown("""
-<script>
-window.addEventListener("message", function(e) {
-    if (!e.data || e.data.type !== "qr_scanned") return;
-    const pid = e.data.pid;
-    const qty = e.data.qty;
-    // Write into a hidden input that Streamlit watches
-    const inputs = window.parent.document.querySelectorAll('input[data-testid="stTextInput"]');
-    for (const inp of inputs) {
-        if (inp.id && inp.id.includes("scanned_input")) {
-            inp.value = pid + ":" + qty;
-            inp.dispatchEvent(new Event("input", {bubbles: true}));
-            break;
-        }
-    }
-});
-</script>
-""", unsafe_allow_html=True)
-
-st.markdown("### 📷 Scan Items")
-st.caption("Tap **Scan Item**, point at any product QR code. Each scan adds to your cart — camera stays on.")
-components.html(scanner_html, height=450, scrolling=False)
-
-# Hidden input that receives scanned values from the JS postMessage listener
-scanned_raw = st.text_input("scanned_input", key="scanned_input", label_visibility="collapsed")
-
-if scanned_raw and ":" in scanned_raw:
-    parts = scanned_raw.split(":", 1)
-    if len(parts) == 2:
-        pid, qty_str = parts
-        try:
-            qty = int(qty_str)
-            if pid in multiplier_map and st.session_state["cart"].get(pid) != qty:
-                st.session_state["cart"][pid] = qty
-                # Clear input and rerun to update cart display
-                st.session_state["scanned_input"] = ""
-                st.rerun()
-        except ValueError:
-            pass
+st.session_state["orderer_name"] = orderer_name
 
 st.divider()
 
@@ -296,8 +153,9 @@ if order_items:
         },
         key="cart_editor",
     )
+    # Sync manual edits
     for _, r in edited_cart.iterrows():
-        pid = str(r["product_number"])
+        pid     = str(r["product_number"])
         new_qty = int(r["qty"])
         if st.session_state["cart"].get(pid) != new_qty:
             st.session_state["cart"][pid] = new_qty
@@ -306,19 +164,19 @@ if order_items:
         st.session_state["do_clear"] = True
         st.rerun()
 else:
-    st.caption("Cart is empty — scan a QR code to add items.")
+    st.caption("Cart is empty — scan a product QR code to add items.")
 
 st.divider()
 
 # ── Notes ─────────────────────────────────────────────────────────────────────
 notes = st.text_area("Notes (optional)", placeholder="Any extra context…", height=80)
 
-# ── Submit — works whether camera is running or not ───────────────────────────
+# ── Submit ────────────────────────────────────────────────────────────────────
 submitted = st.button("🧾 Submit Order", type="primary", use_container_width=True)
 
 if submitted:
     if not order_items:
-        st.error("Cart is empty — scan some items or set quantities above.")
+        st.error("Cart is empty — scan some items first.")
     else:
         orderer  = orderer_name.strip() if orderer_name.strip() else "Anonymous"
         order_df = pd.DataFrame(order_items)
@@ -379,4 +237,5 @@ if submitted:
             st.warning(f"Logged but email failed: {email_error}")
 
         st.session_state["cart"] = {}
+        st.session_state["orderer_name"] = ""
         st.balloons()
