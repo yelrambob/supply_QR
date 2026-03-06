@@ -134,7 +134,7 @@ scanner_html = f"""<!DOCTYPE html>
 <html>
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@ericblade/quagga2@1.8.4/dist/quagga.min.js"></script>
 <style>
 *{{box-sizing:border-box;margin:0;padding:0}}
 body{{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:transparent;padding:4px 2px}}
@@ -143,6 +143,9 @@ body{{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:transpa
 #btn.on{{background:#c0392b}}
 #cam-box{{display:none;position:relative;margin-top:10px;border-radius:12px;
   overflow:hidden;background:#000;width:100%}}
+#interactive{{width:100%}}
+#interactive video{{width:100%!important;max-height:300px;object-fit:cover}}
+#interactive canvas{{display:none}}
 #cam-box.active{{display:block}}
 video{{width:100%;display:block;max-height:300px;object-fit:cover}}
 canvas{{display:none}}
@@ -162,10 +165,9 @@ canvas{{display:none}}
 <body>
 <button id="btn" onclick="toggle()">📷 Scan Item Barcode</button>
 <div id="cam-box">
-  <video id="vid" autoplay playsinline muted></video>
-  <canvas id="cvs"></canvas>
+  <div id="interactive" class="viewport"></div>
   <div id="aim"></div>
-  <div id="hint">Centre QR code in the box</div>
+  <div id="hint">Centre barcode in the box</div>
 </div>
 <div id="msg"></div>
 
@@ -176,62 +178,59 @@ const SB_URL     = "{sb_url}";
 const SB_KEY     = "{sb_key}";
 const CART_TABLE = "{CART_TABLE}";
 
-let stream   = null;
 let active   = false;
 let cooldown = false;
-let raf      = null;
 
 const btn = document.getElementById('btn');
 const box = document.getElementById('cam-box');
-const vid = document.getElementById('vid');
-const cvs = document.getElementById('cvs');
-const ctx = cvs.getContext('2d');
 const msg = document.getElementById('msg');
 
 function setMsg(t, c) {{ msg.className = c; msg.textContent = t; }}
 function toggle() {{ active ? stop() : start(); }}
 
-async function start() {{
+function start() {{
   setMsg('Opening camera…', 'info');
-  try {{
-    stream = await navigator.mediaDevices.getUserMedia({{
-      video: {{ facingMode: {{ ideal: 'environment' }}, width: {{ ideal: 1280 }}, height: {{ ideal: 720 }} }}
-    }});
-    vid.srcObject = stream;
-    await vid.play();
+  Quagga.init({{
+    inputStream: {{
+      type: 'LiveStream',
+      target: document.getElementById('interactive'),
+      constraints: {{
+        facingMode: 'environment',
+        width: {{ ideal: 1280 }},
+        height: {{ ideal: 720 }},
+      }},
+    }},
+    decoder: {{
+      readers: ['code_128_reader', 'ean_reader', 'ean_8_reader', 'code_39_reader'],
+    }},
+    locate: true,
+  }}, function(err) {{
+    if (err) {{
+      setMsg('Camera error: ' + err, 'err');
+      return;
+    }}
+    Quagga.start();
     active = true;
     box.classList.add('active');
     btn.classList.add('on');
     btn.textContent = '⏹ Stop Scanner';
     msg.className = '';
-    tick();
-  }} catch(e) {{
-    setMsg('Camera error: ' + e.message, 'err');
-  }}
+  }});
+
+  Quagga.onDetected(function(result) {{
+    if (!cooldown && result.codeResult) {{
+      handleScan(result.codeResult.code);
+    }}
+  }});
 }}
 
 function stop() {{
+  Quagga.stop();
   active = false;
-  if (raf) cancelAnimationFrame(raf);
-  if (stream) stream.getTracks().forEach(t => t.stop());
-  stream = null;
   box.classList.remove('active');
   btn.classList.remove('on');
   btn.textContent = '📷 Scan Item Barcode';
   msg.className = '';
-}}
-
-function tick() {{
-  if (!active) return;
-  if (vid.readyState === vid.HAVE_ENOUGH_DATA) {{
-    cvs.width  = vid.videoWidth;
-    cvs.height = vid.videoHeight;
-    ctx.drawImage(vid, 0, 0, cvs.width, cvs.height);
-    const d    = ctx.getImageData(0, 0, cvs.width, cvs.height);
-    const code = jsQR(d.data, d.width, d.height, {{ inversionAttempts: 'dontInvert' }});
-    if (code && !cooldown) handleScan(code.data);
-  }}
-  raf = requestAnimationFrame(tick);
 }}
 
 async function handleScan(raw) {{
