@@ -11,71 +11,35 @@ body {
   padding: 4px 0;
 }
 #wrap { width: 100%; max-width: 520px; margin: 0 auto; }
-
 #btn {
-  width: 100%;
-  padding: 15px;
-  font-size: 1.05rem;
-  font-weight: 700;
-  background: #0068c9;
-  color: #fff;
-  border: none;
-  border-radius: 10px;
-  cursor: pointer;
-  transition: background .15s;
+  width: 100%; padding: 15px; font-size: 1.05rem; font-weight: 700;
+  background: #0068c9; color: #fff; border: none; border-radius: 10px;
+  cursor: pointer; transition: background .15s;
 }
 #btn.on { background: #c0392b; }
 #btn:active { opacity: 0.85; }
-
 #cam-box {
-  display: none;
-  position: relative;
-  margin-top: 10px;
-  border-radius: 12px;
-  overflow: hidden;
-  background: #000;
-  width: 100%;
+  display: none; position: relative; margin-top: 10px;
+  border-radius: 12px; overflow: hidden; background: #000; width: 100%;
 }
 #cam-box.active { display: block; }
-
-video {
-  width: 100%;
-  display: block;
-  max-height: 320px;
-  object-fit: cover;
-}
+video { width: 100%; display: block; max-height: 320px; object-fit: cover; }
 canvas { display: none; }
-
 #aim {
-  position: absolute;
-  top: 50%; left: 50%;
+  position: absolute; top: 50%; left: 50%;
   transform: translate(-50%, -52%);
   width: 58%; aspect-ratio: 1;
-  border: 3px solid rgba(255,255,255,.9);
-  border-radius: 10px;
-  box-shadow: 0 0 0 9999px rgba(0,0,0,.5);
-  pointer-events: none;
+  border: 3px solid rgba(255,255,255,.9); border-radius: 10px;
+  box-shadow: 0 0 0 9999px rgba(0,0,0,.5); pointer-events: none;
 }
 #hint {
-  position: absolute;
-  bottom: 10px; left: 50%;
-  transform: translateX(-50%);
-  background: rgba(0,0,0,.65);
-  color: #fff;
-  font-size: .78rem;
-  padding: 4px 12px;
-  border-radius: 20px;
-  white-space: nowrap;
+  position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+  background: rgba(0,0,0,.65); color: #fff; font-size: .78rem;
+  padding: 4px 12px; border-radius: 20px; white-space: nowrap;
 }
-
 #msg {
-  margin-top: 8px;
-  padding: 11px 14px;
-  border-radius: 8px;
-  font-size: .9rem;
-  text-align: center;
-  display: none;
-  font-weight: 500;
+  margin-top: 8px; padding: 11px 14px; border-radius: 8px;
+  font-size: .9rem; text-align: center; display: none; font-weight: 500;
 }
 #msg.ok   { background: #d4edda; color: #155724; display: block; }
 #msg.err  { background: #f8d7da; color: #721c24; display: block; }
@@ -95,44 +59,52 @@ canvas { display: none; }
 </div>
 
 <script>
-// ── Streamlit component bootstrap ─────────────────────────────────────────────
-// Waits for Streamlit to send the CATALOG via setFrameHeight / onRender
+// ── Streamlit component API ────────────────────────────────────────────────────
+// Official protocol: https://docs.streamlit.io/develop/concepts/custom-components
 let CATALOG = {};
+let streamlitReady = false;
 
-function onRender(event) {
-  if (!event.data || event.data.type !== "streamlit:render") return;
-  const args = event.data.args || {};
-  if (args.catalog) {
-    CATALOG = args.catalog;
+// Step 1 — listen for Streamlit's render event which carries our args (catalog)
+window.addEventListener("message", function(event) {
+  if (!event.data) return;
+
+  // Streamlit sends this when it's ready and whenever args change
+  if (event.data.type === "streamlit:render") {
+    const args = event.data.args || {};
+    if (args.catalog) {
+      CATALOG = args.catalog;
+    }
+    // Acknowledge we rendered
+    if (!streamlitReady) {
+      streamlitReady = true;
+      setHeight(72);
+    }
   }
-}
-window.addEventListener("message", onRender);
+});
 
-// Tell Streamlit we're ready and set initial height
-function sendReady() {
-  window.parent.postMessage({ type: "streamlit:componentReady", apiVersion: 1 }, "*");
-  setHeight(68); // button-only height
-}
+// Step 2 — tell Streamlit we exist (must happen after page load)
+window.addEventListener("load", function() {
+  window.parent.postMessage({
+    type: "streamlit:componentReady",
+    apiVersion: 1
+  }, "*");
+});
 
 function setHeight(h) {
   window.parent.postMessage({ type: "streamlit:setFrameHeight", height: h }, "*");
 }
 
+// Step 3 — send a scanned value back to Python
+// dataType is required — "json" tells Streamlit how to deserialize
 function sendValue(pid, qty) {
   window.parent.postMessage({
     type: "streamlit:setComponentValue",
+    dataType: "json",
     value: { product_number: pid, qty: qty }
   }, "*");
 }
 
-// Boot
-if (document.readyState === "complete") {
-  sendReady();
-} else {
-  window.addEventListener("load", sendReady);
-}
-
-// ── Scanner logic ─────────────────────────────────────────────────────────────
+// ── Scanner ───────────────────────────────────────────────────────────────────
 let stream = null, active = false, raf = null, cooldown = false;
 const vid = document.getElementById("vid");
 const cvs = document.getElementById("cvs");
@@ -158,7 +130,7 @@ async function start() {
     btn.classList.add("on");
     btn.textContent = "⏹  Stop Scanner";
     msg.className = "";
-    setHeight(420);
+    setHeight(430);
     tick();
   } catch(e) {
     setMsg("Camera error: " + e.message, "err");
@@ -173,17 +145,17 @@ function stop() {
   box.classList.remove("active");
   btn.classList.remove("on");
   btn.textContent = "📷  Scan Item";
-  setHeight(68);
+  setHeight(72);
   msg.className = "";
 }
 
 function tick() {
   if (!active) return;
   if (vid.readyState === vid.HAVE_ENOUGH_DATA) {
-    cvs.width = vid.videoWidth;
+    cvs.width  = vid.videoWidth;
     cvs.height = vid.videoHeight;
     ctx.drawImage(vid, 0, 0, cvs.width, cvs.height);
-    const d = ctx.getImageData(0, 0, cvs.width, cvs.height);
+    const d    = ctx.getImageData(0, 0, cvs.width, cvs.height);
     const code = jsQR(d.data, d.width, d.height, { inversionAttempts: "dontInvert" });
     if (code && !cooldown) handleQR(code.data);
   }
@@ -200,22 +172,27 @@ function handleQR(raw) {
   }
 
   if (!pid) return;
+
+  // If catalog hasn't loaded yet or pid not found, show error
+  if (Object.keys(CATALOG).length === 0) {
+    setMsg("Catalog not loaded yet — try again in a moment", "err");
+    return;
+  }
   if (!(pid in CATALOG)) {
-    setMsg("Product #" + pid + " not in catalog", "err");
+    setMsg("Product #" + pid + " not found in catalog", "err");
     return;
   }
 
   const qty = CATALOG[pid];
   cooldown = true;
-  setMsg("✅ Added: " + pid + " (qty " + qty + ")", "ok");
+  setMsg("✅ Added: #" + pid + "  (qty " + qty + ")  — scan next or tap Stop", "ok");
 
-  // Send to Python WITHOUT navigating away — camera stays alive
   sendValue(pid, qty);
 
-  // Allow scanning again after 2 seconds (prevents double-scan)
-  setTimeout(() => {
+  // Reset cooldown after 2s so next item can be scanned
+  setTimeout(function() {
     cooldown = false;
-    setMsg("Ready — scan next item or tap Stop", "info");
+    if (active) setMsg("Ready — point at next QR code", "info");
   }, 2000);
 }
 </script>
