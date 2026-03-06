@@ -4,6 +4,8 @@ import zoneinfo
 from datetime import datetime
 from pathlib import Path
 import re
+import io
+import base64
 
 from db.supabase_client import (
     append_log,
@@ -81,6 +83,30 @@ def read_emails() -> pd.DataFrame:
 
     return pd.DataFrame(rows)
 
+# ---------------- QR Code Generator ----------------
+def generate_qr_code(data: str, box_size: int = 6, border: int = 2) -> str:
+    """Generate a QR code as a base64-encoded PNG string."""
+    try:
+        import qrcode
+        from PIL import Image
+
+        qr = qrcode.QRCode(
+            version=None,
+            error_correction=qrcode.constants.ERROR_CORRECT_M,
+            box_size=box_size,
+            border=border,
+        )
+        qr.add_data(data)
+        qr.make(fit=True)
+
+        img = qr.make_image(fill_color="black", back_color="white")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        buf.seek(0)
+        return base64.b64encode(buf.read()).decode("utf-8")
+    except ImportError:
+        return None
+
 # ---------------- Session state ----------------
 if "orderer" not in st.session_state:
     st.session_state["orderer"] = None
@@ -131,7 +157,7 @@ else:
     st.caption("🛒 No items currently selected.")
 
 # ---------------- Tabs ----------------
-tabs = st.tabs(["Create Order", "Adjust Inventory", "Catalog", "Order Logs"])
+tabs = st.tabs(["Create Order", "Adjust Inventory", "Catalog", "Order Logs", "QR Codes"])
 
 # =====================================================
 # Create Order
@@ -386,3 +412,148 @@ with tabs[3]:
             file_name="order_log.csv",
             mime="text/csv",
         )
+
+# =====================================================
+# QR Codes
+# =====================================================
+with tabs[4]:
+    st.markdown("## 📱 QR Codes for Catalog Items")
+    st.markdown(
+        "Each QR code links directly to a scan-order page pre-loaded with that item "
+        "and its recommended order quantity. Anyone can scan and submit an order."
+    )
+
+    if catalog.empty:
+        st.info("No catalog items found.")
+    else:
+        # --- App URL configuration ---
+        st.markdown("### ⚙️ Setup")
+        app_base_url = st.text_input(
+            "Your Streamlit app's public URL",
+            placeholder="https://your-app.streamlit.app",
+            help=(
+                "Enter the base URL where your app is hosted. "
+                "The QR codes will point to: <your-url>/scan_order?item=...&qty=..."
+            ),
+        )
+
+        if not app_base_url:
+            st.info("👆 Enter your app's public URL above to generate QR codes.")
+        else:
+            app_base_url = app_base_url.rstrip("/")
+
+            # Check if qrcode library is available
+            try:
+                import qrcode  # noqa: F401
+                qr_available = True
+            except ImportError:
+                qr_available = False
+
+            if not qr_available:
+                st.warning(
+                    "⚠️ The `qrcode` library is not installed. "
+                    "Run `pip install qrcode[pil]` in your environment, then restart the app. "
+                    "The scan links below are still correct — you can use them with any external QR generator."
+                )
+
+            # --- Filter/search ---
+            search_qr = st.text_input("Filter items", placeholder="Search by name or product #")
+
+            display_catalog = catalog.copy()
+            display_catalog["product_number"] = display_catalog["product_number"].astype(str)
+
+            if search_qr:
+                mask = (
+                    display_catalog["item"].str.contains(search_qr, case=False, na=False)
+                    | display_catalog["product_number"].str.contains(search_qr, case=False, na=False)
+                )
+                display_catalog = display_catalog[mask]
+
+            if display_catalog.empty:
+                st.info("No items match that search.")
+            else:
+                # --- Layout selector ---
+                cols_count = st.radio(
+                    "Cards per row", [2, 3, 4], index=1, horizontal=True
+                )
+
+                # --- Download all QR codes as a zip (if qrcode available) ---
+                if qr_available:
+                    if st.button("⬇️ Download all QR codes as ZIP"):
+                        import zipfile
+
+                        zip_buf = io.BytesIO()
+                        with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                            for _, row in display_catalog.iterrows():
+                                pid = str(row["product_number"])
+                                item_name = str(row["item"])
+                                rec_qty = int(row.get("items_per_order", 1) or 1)
+                                url = (
+                                    f"{app_base_url}/scan_order"
+                                    f"?product_number={pid}"
+                                    f"&qty={rec_qty}"
+                                )
+                                b64 = generate_qr_code(url)
+                                if b64:
+                                    img_bytes = base64.b64decode(b64)
+                                    safe_name = re.sub(r"[^a-zA-Z0-9_\-]", "_", item_name)
+                                    zf.writestr(f"qr_{safe_name}_{pid}.png", img_bytes)
+
+                        zip_buf.seek(0)
+                        st.download_button(
+                            "📦 Click here to save ZIP",
+                            data=zip_buf.getvalue(),
+                            file_name="supply_qr_codes.zip",
+                            mime="application/zip",
+                        )
+
+                # --- Render cards ---
+                rows_iter = [
+                    display_catalog.iloc[i : i + cols_count]
+                    for i in range(0, len(display_catalog), cols_count)
+                ]
+
+                for row_group in rows_iter:
+                    cols = st.columns(cols_count)
+                    for col, (_, item_row) in zip(cols, row_group.iterrows()):
+                        pid = str(item_row["product_number"])
+                        item_name = str(item_row["item"])
+                        rec_qty = int(item_row.get("items_per_order", 1) or 1)
+                        price = item_row.get("price", None)
+                        current_qty = item_row.get("current_qty", None)
+
+                        scan_url = (
+                            f"{app_base_url}/scan_order"
+                            f"?product_number={pid}"
+                            f"&qty={rec_qty}"
+                        )
+
+                        with col:
+                            with st.container(border=True):
+                                st.markdown(f"**{item_name}**")
+                                st.caption(f"Product #: `{pid}`")
+
+                                meta_parts = [f"📦 Rec. order: **{rec_qty}**"]
+                                if price:
+                                    meta_parts.append(f"💵 ${float(price):.2f}/unit")
+                                if current_qty is not None:
+                                    meta_parts.append(f"🗃️ In stock: {int(current_qty)}")
+                                st.markdown(" &nbsp;|&nbsp; ".join(meta_parts))
+
+                                if qr_available:
+                                    b64 = generate_qr_code(scan_url, box_size=5, border=2)
+                                    if b64:
+                                        st.markdown(
+                                            f'<img src="data:image/png;base64,{b64}" '
+                                            f'width="180" style="display:block;margin:8px auto;"/>',
+                                            unsafe_allow_html=True,
+                                        )
+                                else:
+                                    # Show the URL so they can use an external generator
+                                    st.code(scan_url, language=None)
+
+                                st.markdown(
+                                    f'<a href="{scan_url}" target="_blank" '
+                                    f'style="font-size:0.8em;">🔗 Scan link</a>',
+                                    unsafe_allow_html=True,
+                                )
