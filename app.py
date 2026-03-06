@@ -535,30 +535,110 @@ with tabs[4]:
         if display_bc.empty:
             st.info("No items match.")
         else:
-            # Download ZIP of all barcodes
-            if bc_available and st.button("⬇️ Download all barcode labels as ZIP", key="bc_zip"):
-                import zipfile
+            # ── Label sheet dimensions ─────────────────────────────────────
+            st.markdown("#### 📐 Label Sheet Settings")
+            st.caption("Default is Avery 5163 / 2×4 inch, 10 per sheet. Adjust for your sheet (e.g. 04A-U1).")
+            dim_col1, dim_col2, dim_col3 = st.columns(3)
+            with dim_col1:
+                lbl_w_in = st.number_input("Label width (in)", value=2.625, step=0.05, format="%.2f", key="lbl_w")
+                lbl_h_in = st.number_input("Label height (in)", value=1.0, step=0.05, format="%.2f", key="lbl_h")
+            with dim_col2:
+                lbl_cols = st.number_input("Columns", value=3, min_value=1, max_value=6, step=1, key="lbl_cols")
+                lbl_rows = st.number_input("Rows", value=10, min_value=1, max_value=20, step=1, key="lbl_rows")
+            with dim_col3:
+                margin_left_in = st.number_input("Left margin (in)", value=0.19, step=0.01, format="%.2f", key="lbl_ml")
+                margin_top_in  = st.number_input("Top margin (in)", value=0.50, step=0.01, format="%.2f", key="lbl_mt")
+
+            # ── PDF generation ─────────────────────────────────────────────
+            if bc_available:
+                try:
+                    from reportlab.pdfgen import canvas as _rl_canvas
+                    from reportlab.lib.pagesizes import letter as _letter
+                    from reportlab.lib.units import inch as _inch
+                    from reportlab.lib.utils import ImageReader as _ImageReader
+                    from PIL import Image as _Image
+                    rl_available = True
+                except ImportError:
+                    rl_available = False
+            else:
+                rl_available = False
+
+            if rl_available and st.button("📄 Download label sheet PDF", key="bc_pdf"):
                 import io as _io
-                zip_buf = _io.BytesIO()
+
+                PAGE_W, PAGE_H   = _letter
+                LABEL_W          = lbl_w_in * _inch
+                LABEL_H          = lbl_h_in * _inch
+                COLS             = int(lbl_cols)
+                ROWS             = int(lbl_rows)
+                ML               = margin_left_in * _inch
+                MT               = margin_top_in  * _inch
+                H_GAP            = max(0.0, (PAGE_W - ML*2 - COLS * LABEL_W) / max(COLS-1, 1))
+                V_GAP            = 0.0
+
+                pdf_buf = _io.BytesIO()
+                c = _rl_canvas.Canvas(pdf_buf, pagesize=(PAGE_W, PAGE_H))
                 CODE128 = _pbc.get_barcode_class("code128")
-                with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                    for _, row in display_bc.iterrows():
-                        pid = str(row["product_number"])
-                        item_name = str(row["item"])
-                        try:
-                            buf = _io.BytesIO()
-                            bc = CODE128(pid, writer=_IW())
-                            bc.write(buf, options={"write_text": True, "font_size": 10, "text_distance": 4})
-                            buf.seek(0)
-                            safe = re.sub(r"[^a-zA-Z0-9_-]", "_", item_name)
-                            zf.writestr(f"barcode_{safe}_{pid}.png", buf.read())
-                        except Exception:
-                            pass
-                zip_buf.seek(0)
+
+                for label_idx, (_, row) in enumerate(display_bc.iterrows()):
+                    col_i = label_idx % COLS
+                    row_i = (label_idx // COLS) % ROWS
+                    if label_idx > 0 and label_idx % (COLS * ROWS) == 0:
+                        c.showPage()
+
+                    pid        = str(row["product_number"])
+                    item_name  = str(row["item"])
+                    multiplier = int(row.get("multiplier") or 1)
+
+                    x = ML + col_i * (LABEL_W + H_GAP)
+                    y = PAGE_H - MT - (row_i + 1) * LABEL_H - row_i * V_GAP
+                    PAD = 5
+
+                    # Product name
+                    c.setFont("Helvetica-Bold", 7.5)
+                    max_chars = int((LABEL_W - PAD*2) / 4.3)
+                    dname = item_name if len(item_name) <= max_chars else item_name[:max_chars-1] + "..."
+                    c.drawString(x + PAD, y + LABEL_H - PAD - 9, dname)
+
+                    # Barcode image
+                    try:
+                        bc_buf = _io.BytesIO()
+                        bc = CODE128(pid, writer=_IW())
+                        bc.write(bc_buf, options={"write_text": False, "module_height": 10.0, "quiet_zone": 2.0})
+                        bc_buf.seek(0)
+                        bc_img   = _Image.open(bc_buf)
+                        bc_draw_h = LABEL_H * 0.33
+                        bc_draw_w = min(LABEL_W - PAD*2, bc_draw_h * bc_img.size[0] / bc_img.size[1])
+                        bc_x = x + (LABEL_W - bc_draw_w) / 2
+                        bc_y = y + 0.285 * _inch
+                        out_buf = _io.BytesIO()
+                        bc_img.save(out_buf, format="PNG")
+                        out_buf.seek(0)
+                        c.drawImage(_ImageReader(out_buf), bc_x, bc_y, width=bc_draw_w, height=bc_draw_h)
+                    except Exception:
+                        pass
+
+                    # Product number
+                    c.setFont("Helvetica", 6)
+                    c.drawCentredString(x + LABEL_W/2, y + 0.21 * _inch, pid)
+
+                    # Multiplier line
+                    c.setFont("Helvetica", 6.5)
+                    c.drawString(x + PAD, y + PAD, f"For a single box order:  {multiplier}")
+
+                c.save()
+                pdf_buf.seek(0)
                 st.download_button(
-                    "📦 Save ZIP", data=zip_buf.getvalue(),
-                    file_name="barcode_labels.zip", mime="application/zip", key="bc_zip_dl"
+                    "💾 Save label PDF",
+                    data=pdf_buf.getvalue(),
+                    file_name="barcode_labels.pdf",
+                    mime="application/pdf",
+                    key="bc_pdf_dl",
                 )
+            elif not bc_available:
+                st.info("Add `python-barcode[images]` and `reportlab` to requirements.txt to generate PDFs.")
+            elif not rl_available:
+                st.info("Add `reportlab` to requirements.txt to generate PDFs.")
 
             rows_iter = [
                 display_bc.iloc[i: i + cols_count_bc]
