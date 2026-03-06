@@ -166,17 +166,15 @@ video{{width:100%;display:block;max-height:300px;object-fit:cover}}
 </div>
 <div id="msg"></div>
 
-<script type="module">
-import {{ BrowserMultiFormatReader }}
-  from 'https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/esm/index.min.js';
-
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0/umd/index.min.js"></script>
+<script>
 const CATALOG    = {catalog_json};
 const CART_ID    = "{cart_id}";
 const SB_URL     = "{sb_url}";
 const SB_KEY     = "{sb_key}";
 const CART_TABLE = "{CART_TABLE}";
 
-const reader   = new BrowserMultiFormatReader();
+const reader   = new ZXing.BrowserMultiFormatReader();
 let active     = false;
 let cooldown   = false;
 let controls   = null;
@@ -192,7 +190,7 @@ function toggle() {{ active ? stop() : start(); }}
 async function start() {{
   setMsg('Opening camera…', 'info');
   try {{
-    const devices  = await BrowserMultiFormatReader.listVideoInputDevices();
+    const devices  = await ZXing.BrowserMultiFormatReader.listVideoInputDevices();
     const back     = devices.find(d => /back|rear|environment/i.test(d.label));
     const deviceId = (back || devices[devices.length - 1])?.deviceId;
     controls = await reader.decodeFromVideoDevice(
