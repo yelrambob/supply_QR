@@ -1,1 +1,223 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  background: transparent;
+  padding: 4px 0;
+}
+#wrap { width: 100%; max-width: 520px; margin: 0 auto; }
 
+#btn {
+  width: 100%;
+  padding: 15px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  background: #0068c9;
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background .15s;
+}
+#btn.on { background: #c0392b; }
+#btn:active { opacity: 0.85; }
+
+#cam-box {
+  display: none;
+  position: relative;
+  margin-top: 10px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #000;
+  width: 100%;
+}
+#cam-box.active { display: block; }
+
+video {
+  width: 100%;
+  display: block;
+  max-height: 320px;
+  object-fit: cover;
+}
+canvas { display: none; }
+
+#aim {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -52%);
+  width: 58%; aspect-ratio: 1;
+  border: 3px solid rgba(255,255,255,.9);
+  border-radius: 10px;
+  box-shadow: 0 0 0 9999px rgba(0,0,0,.5);
+  pointer-events: none;
+}
+#hint {
+  position: absolute;
+  bottom: 10px; left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0,0,0,.65);
+  color: #fff;
+  font-size: .78rem;
+  padding: 4px 12px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+
+#msg {
+  margin-top: 8px;
+  padding: 11px 14px;
+  border-radius: 8px;
+  font-size: .9rem;
+  text-align: center;
+  display: none;
+  font-weight: 500;
+}
+#msg.ok   { background: #d4edda; color: #155724; display: block; }
+#msg.err  { background: #f8d7da; color: #721c24; display: block; }
+#msg.info { background: #cce5ff; color: #004085; display: block; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <button id="btn" onclick="toggle()">📷&nbsp; Scan Item</button>
+  <div id="cam-box">
+    <video id="vid" autoplay playsinline muted></video>
+    <canvas id="cvs"></canvas>
+    <div id="aim"></div>
+    <div id="hint">Align QR code inside the box</div>
+  </div>
+  <div id="msg"></div>
+</div>
+
+<script>
+// ── Streamlit component bootstrap ─────────────────────────────────────────────
+// Waits for Streamlit to send the CATALOG via setFrameHeight / onRender
+let CATALOG = {};
+
+function onRender(event) {
+  if (!event.data || event.data.type !== "streamlit:render") return;
+  const args = event.data.args || {};
+  if (args.catalog) {
+    CATALOG = args.catalog;
+  }
+}
+window.addEventListener("message", onRender);
+
+// Tell Streamlit we're ready and set initial height
+function sendReady() {
+  window.parent.postMessage({ type: "streamlit:componentReady", apiVersion: 1 }, "*");
+  setHeight(68); // button-only height
+}
+
+function setHeight(h) {
+  window.parent.postMessage({ type: "streamlit:setFrameHeight", height: h }, "*");
+}
+
+function sendValue(pid, qty) {
+  window.parent.postMessage({
+    type: "streamlit:setComponentValue",
+    value: { product_number: pid, qty: qty }
+  }, "*");
+}
+
+// Boot
+if (document.readyState === "complete") {
+  sendReady();
+} else {
+  window.addEventListener("load", sendReady);
+}
+
+// ── Scanner logic ─────────────────────────────────────────────────────────────
+let stream = null, active = false, raf = null, cooldown = false;
+const vid = document.getElementById("vid");
+const cvs = document.getElementById("cvs");
+const ctx = cvs.getContext("2d");
+const box = document.getElementById("cam-box");
+const btn = document.getElementById("btn");
+const msg = document.getElementById("msg");
+
+function setMsg(t, c) { msg.className = c; msg.textContent = t; }
+
+function toggle() { active ? stop() : start(); }
+
+async function start() {
+  setMsg("Opening camera…", "info");
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }
+    });
+    vid.srcObject = stream;
+    await vid.play();
+    active = true;
+    box.classList.add("active");
+    btn.classList.add("on");
+    btn.textContent = "⏹  Stop Scanner";
+    msg.className = "";
+    setHeight(420);
+    tick();
+  } catch(e) {
+    setMsg("Camera error: " + e.message, "err");
+  }
+}
+
+function stop() {
+  active = false;
+  if (raf) cancelAnimationFrame(raf);
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null;
+  box.classList.remove("active");
+  btn.classList.remove("on");
+  btn.textContent = "📷  Scan Item";
+  setHeight(68);
+  msg.className = "";
+}
+
+function tick() {
+  if (!active) return;
+  if (vid.readyState === vid.HAVE_ENOUGH_DATA) {
+    cvs.width = vid.videoWidth;
+    cvs.height = vid.videoHeight;
+    ctx.drawImage(vid, 0, 0, cvs.width, cvs.height);
+    const d = ctx.getImageData(0, 0, cvs.width, cvs.height);
+    const code = jsQR(d.data, d.width, d.height, { inversionAttempts: "dontInvert" });
+    if (code && !cooldown) handleQR(code.data);
+  }
+  raf = requestAnimationFrame(tick);
+}
+
+function handleQR(raw) {
+  let pid = null;
+  try {
+    const u = new URL(raw);
+    pid = u.searchParams.get("product_number");
+  } catch(_) {
+    pid = raw.trim();
+  }
+
+  if (!pid) return;
+  if (!(pid in CATALOG)) {
+    setMsg("Product #" + pid + " not in catalog", "err");
+    return;
+  }
+
+  const qty = CATALOG[pid];
+  cooldown = true;
+  setMsg("✅ Added: " + pid + " (qty " + qty + ")", "ok");
+
+  // Send to Python WITHOUT navigating away — camera stays alive
+  sendValue(pid, qty);
+
+  // Allow scanning again after 2 seconds (prevents double-scan)
+  setTimeout(() => {
+    cooldown = false;
+    setMsg("Ready — scan next item or tap Stop", "info");
+  }, 2000);
+}
+</script>
+</body>
+</html>
