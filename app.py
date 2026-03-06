@@ -157,7 +157,7 @@ else:
     st.caption("🛒 No items currently selected.")
 
 # ---------------- Tabs ----------------
-tabs = st.tabs(["Create Order", "Adjust Inventory", "Catalog", "Order Logs", "QR Codes"])
+tabs = st.tabs(["Create Order", "Adjust Inventory", "Catalog", "Order Logs", "QR Codes", "Barcode Labels"])
 
 # =====================================================
 # Create Order
@@ -464,6 +464,28 @@ with tabs[4]:
                     "The scan links below are still correct — you can use them with any external QR generator."
                 )
 
+            # --- General QR code for the order page ---
+            st.markdown("### 🌐 General Order Page QR")
+            st.caption("Post this anywhere — it opens the full order page with no item pre-selected.")
+            general_url = f"{app_base_url}/scan_order"
+            if qr_available:
+                b64 = generate_qr_code(general_url, box_size=6, border=2)
+                if b64:
+                    col_a, col_b = st.columns([1, 2])
+                    with col_a:
+                        st.markdown(
+                            f'<img src="data:image/png;base64,{b64}" width="160" style="display:block;margin:4px 0"/>',
+                            unsafe_allow_html=True,
+                        )
+                    with col_b:
+                        st.markdown(f"**URL:** `{general_url}`")
+                        st.caption("Anyone who scans this lands on the order page and can manually select items or scan individual product QR codes to build their cart.")
+            else:
+                st.code(general_url, language=None)
+
+            st.markdown("### 📦 Individual Item QR Codes")
+            st.caption("Each code pre-loads that item with its recommended qty. Scanning multiple codes in sequence builds one combined order.")
+
             # --- Filter/search ---
             search_qr = st.text_input("Filter items", placeholder="Search by name or product #")
 
@@ -565,3 +587,105 @@ with tabs[4]:
                                     f'style="font-size:0.8em;">🔗 Scan link</a>',
                                     unsafe_allow_html=True,
                                 )
+
+# =====================================================
+# Barcode Labels
+# =====================================================
+with tabs[5]:
+    st.markdown("## 🏷️ Barcode Labels for Scanning")
+    st.markdown(
+        "Print these labels and stick them on your supply items. "
+        "Scan them with the in-app scanner on the order page to add items to your cart."
+    )
+
+    if catalog.empty:
+        st.info("No catalog items found.")
+    else:
+        try:
+            import python_barcode as barcode
+            from python_barcode.writer import ImageWriter
+            import io, base64
+            barcode_available = True
+        except ImportError:
+            barcode_available = False
+
+        if not barcode_available:
+            st.warning(
+                "Add `python-barcode[images]` and `Pillow` to requirements.txt to generate barcode images. "
+                "The label data below is correct — you can paste product numbers into any barcode generator."
+            )
+
+        search_bc = st.text_input("Filter items", placeholder="Search by name or product #", key="bc_search")
+        cols_count_bc = st.radio("Labels per row", [2, 3, 4], index=2, horizontal=True, key="bc_cols")
+
+        display_bc = catalog.copy()
+        display_bc["product_number"] = display_bc["product_number"].astype(str)
+        if search_bc:
+            mask = (
+                display_bc["item"].str.contains(search_bc, case=False, na=False)
+                | display_bc["product_number"].str.contains(search_bc, case=False, na=False)
+            )
+            display_bc = display_bc[mask]
+
+        if display_bc.empty:
+            st.info("No items match.")
+        else:
+            # Download all as ZIP
+            if barcode_available and st.button("⬇️ Download all barcode labels as ZIP", key="bc_zip"):
+                import zipfile
+                zip_buf = io.BytesIO()
+                CODE128 = barcode.get_barcode_class("code128")
+                with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for _, row in display_bc.iterrows():
+                        pid = str(row["product_number"])
+                        item_name = str(row["item"])
+                        try:
+                            buf = io.BytesIO()
+                            bc = CODE128(pid, writer=ImageWriter())
+                            bc.write(buf, options={"write_text": True, "font_size": 10, "text_distance": 4})
+                            buf.seek(0)
+                            safe = re.sub(r"[^a-zA-Z0-9_\-]", "_", item_name)
+                            zf.writestr(f"barcode_{safe}_{pid}.png", buf.read())
+                        except Exception:
+                            pass
+                zip_buf.seek(0)
+                st.download_button("📦 Save ZIP", data=zip_buf.getvalue(),
+                    file_name="barcode_labels.zip", mime="application/zip", key="bc_zip_dl")
+
+            # Render label cards
+            rows_iter = [
+                display_bc.iloc[i: i + cols_count_bc]
+                for i in range(0, len(display_bc), cols_count_bc)
+            ]
+            for row_group in rows_iter:
+                cols = st.columns(cols_count_bc)
+                for col, (_, item_row) in zip(cols, row_group.iterrows()):
+                    pid       = str(item_row["product_number"])
+                    item_name = str(item_row["item"])
+                    rec_qty   = int(item_row.get("multiplier", 1) or 1)
+                    with col:
+                        with st.container(border=True):
+                            st.markdown(f"**{item_name}**")
+                            st.caption(f"Product #: `{pid}`  •  Rec. qty: {rec_qty}")
+                            if barcode_available:
+                                try:
+                                    CODE128 = barcode.get_barcode_class("code128")
+                                    buf = io.BytesIO()
+                                    bc = CODE128(pid, writer=ImageWriter())
+                                    bc.write(buf, options={
+                                        "write_text": True,
+                                        "font_size": 10,
+                                        "text_distance": 4,
+                                        "module_height": 8.0,
+                                        "quiet_zone": 2.0,
+                                    })
+                                    buf.seek(0)
+                                    b64 = base64.b64encode(buf.read()).decode()
+                                    st.markdown(
+                                        f'<img src="data:image/png;base64,{b64}" '                                        f'style="width:100%;display:block;margin:4px 0"/>',
+                                        unsafe_allow_html=True,
+                                    )
+                                except Exception as e:
+                                    st.caption(f"Barcode error: {e}")
+                            else:
+                                st.code(pid, language=None)
