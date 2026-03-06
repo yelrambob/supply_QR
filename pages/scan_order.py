@@ -43,15 +43,20 @@ def read_emails() -> pd.DataFrame:
 # ── Session state ──────────────────────────────────────────────────────────────
 if "scan_qty_map" not in st.session_state:
     st.session_state["scan_qty_map"] = {}
-if "last_scanned" not in st.session_state:
-    st.session_state["last_scanned"] = ""
+# FIX: clear cart flag handled at very top before any rendering
+if "do_clear" not in st.session_state:
+    st.session_state["do_clear"] = False
+
+if st.session_state["do_clear"]:
+    st.session_state["scan_qty_map"] = {}
+    st.session_state["do_clear"] = False
 
 # ── Load data ──────────────────────────────────────────────────────────────────
 catalog = read_catalog()
 emails_df = read_emails()
 
 if catalog.empty:
-    st.error("Catalog is not available. Please contact an administrator.")
+    st.error("Catalog is not available.")
     st.stop()
 
 catalog["product_number"] = catalog["product_number"].astype(str)
@@ -62,7 +67,7 @@ multiplier_map = {
 }
 
 # ── URL query params ───────────────────────────────────────────────────────────
-params = st.query_params
+params               = st.query_params
 product_number_param = params.get("product_number", "")
 qty_param            = params.get("qty", "1")
 scanned_pid          = params.get("scanned_pid", "")
@@ -76,16 +81,14 @@ except (ValueError, TypeError):
 if product_number_param:
     st.session_state["scan_qty_map"][product_number_param] = default_qty
 
-# Add item from in-page camera scan (arrives via query param)
-if scanned_pid and scanned_pid != st.session_state["last_scanned"]:
+# FIX: always process scanned_pid if present — remove debounce which was blocking adds
+if scanned_pid:
     rec = multiplier_map.get(scanned_pid, 1)
     st.session_state["scan_qty_map"][scanned_pid] = rec
-    st.session_state["last_scanned"] = scanned_pid
-    # Clear the param so it doesn't re-trigger on next rerun
     st.query_params.pop("scanned_pid", None)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Page header
+# Header
 # ══════════════════════════════════════════════════════════════════════════════
 st.markdown(
     '<h2 style="text-align:center;padding:0.5rem 0 0.1rem">📱 Quick Supply Order</h2>'
@@ -94,20 +97,10 @@ st.markdown(
 )
 st.divider()
 
-# ── Name ──────────────────────────────────────────────────────────────────────
 orderer_name = st.text_input("Your name (optional)", placeholder="Leave blank to submit as Anonymous")
 st.divider()
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Camera QR scanner — self-contained iframe
-# Key fixes vs previous version:
-#   1. Height is dynamic: button-only = 80px, camera open = 420px via JS resize
-#   2. No window.parent.location redirect (kills camera). Instead writes to a
-#      hidden <a> and uses fetch() to hit Streamlit's own URL with the new param,
-#      then reloads after a short delay so camera has time to show the success msg.
-#   3. scrolling=True so nothing gets clipped on small phones
-# ══════════════════════════════════════════════════════════════════════════════
-
+# ── Camera QR scanner ──────────────────────────────────────────────────────────
 catalog_json = json.dumps(multiplier_map)
 
 scanner_html = f"""<!DOCTYPE html>
@@ -117,42 +110,43 @@ scanner_html = f"""<!DOCTYPE html>
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 <style>
 *{{box-sizing:border-box;margin:0;padding:0}}
-body{{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:transparent;padding:6px 0}}
+body{{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:transparent;padding:4px 0}}
 #wrap{{width:100%;max-width:520px;margin:0 auto}}
-#btn{{width:100%;padding:15px;font-size:1rem;font-weight:700;background:#0068c9;color:#fff;
-  border:none;border-radius:10px;cursor:pointer;letter-spacing:.02em;transition:background .2s}}
-#btn:active{{background:#004fa3}}
+#btn{{width:100%;padding:15px;font-size:1.05rem;font-weight:700;background:#0068c9;color:#fff;
+  border:none;border-radius:10px;cursor:pointer;transition:background .15s}}
 #btn.on{{background:#c0392b}}
-#cam-box{{display:none;position:relative;margin-top:10px;border-radius:12px;overflow:hidden;background:#000;
-  width:100%;max-height:340px}}
+#cam-box{{display:none;position:relative;margin-top:10px;border-radius:12px;
+  overflow:hidden;background:#000;width:100%}}
 #cam-box.active{{display:block}}
-video{{width:100%;display:block;max-height:340px;object-fit:cover}}
+video{{width:100%;display:block;max-height:320px;object-fit:cover}}
 canvas{{display:none}}
-#aim{{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
-  width:55%;aspect-ratio:1;border:3px solid rgba(255,255,255,.85);border-radius:10px;
+#aim{{position:absolute;top:50%;left:50%;transform:translate(-50%,-52%);
+  width:58%;aspect-ratio:1;border:3px solid rgba(255,255,255,.9);border-radius:10px;
   box-shadow:0 0 0 9999px rgba(0,0,0,.5);pointer-events:none}}
-#hint{{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);
-  background:rgba(0,0,0,.6);color:#fff;font-size:.75rem;padding:3px 10px;border-radius:20px;white-space:nowrap}}
-#msg{{margin-top:8px;padding:10px 14px;border-radius:8px;font-size:.88rem;text-align:center;display:none}}
-#msg.ok{{background:#d4edda;color:#155724;display:block}}
-#msg.err{{background:#f8d7da;color:#721c24;display:block}}
+#hint{{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);
+  background:rgba(0,0,0,.65);color:#fff;font-size:.78rem;padding:4px 12px;
+  border-radius:20px;white-space:nowrap}}
+#msg{{margin-top:8px;padding:11px 14px;border-radius:8px;font-size:.9rem;
+  text-align:center;display:none;font-weight:500}}
+#msg.ok  {{background:#d4edda;color:#155724;display:block}}
+#msg.err {{background:#f8d7da;color:#721c24;display:block}}
 #msg.info{{background:#cce5ff;color:#004085;display:block}}
 </style>
 </head>
 <body>
 <div id="wrap">
-  <button id="btn" onclick="toggle()">📷  Scan Item</button>
+  <button id="btn" onclick="toggle()">📷&nbsp; Scan Item</button>
   <div id="cam-box">
     <video id="vid" autoplay playsinline muted></video>
     <canvas id="cvs"></canvas>
     <div id="aim"></div>
-    <div id="hint">Centre QR code in the box</div>
+    <div id="hint">Align QR code inside the box</div>
   </div>
   <div id="msg"></div>
 </div>
 <script>
-const CATALOG={catalog_json};
-let stream=null,active=false,raf=null,lastPid="",cooldown=false;
+const CATALOG = {catalog_json};
+let stream=null, active=false, raf=null, cooldown=false;
 const vid=document.getElementById("vid");
 const cvs=document.getElementById("cvs");
 const ctx=cvs.getContext("2d");
@@ -160,91 +154,83 @@ const box=document.getElementById("cam-box");
 const btn=document.getElementById("btn");
 const msg=document.getElementById("msg");
 
-function setMsg(t,c){{msg.className=c;msg.textContent=t;}}
+function setMsg(t,c){{ msg.className=c; msg.textContent=t; }}
 
-function toggle(){{active?stop():start();}}
+function toggle(){{ active ? stop() : start(); }}
 
 async function start(){{
   setMsg("Opening camera…","info");
   try{{
-    stream=await navigator.mediaDevices.getUserMedia({{
-      video:{{facingMode:{{ideal:"environment"}},width:{{ideal:1280}},height:{{ideal:720}}}}
+    stream = await navigator.mediaDevices.getUserMedia({{
+      video:{{ facingMode:{{ideal:"environment"}}, width:{{ideal:1280}}, height:{{ideal:720}} }}
     }});
-    vid.srcObject=stream;
+    vid.srcObject = stream;
     await vid.play();
-    active=true;
+    active = true;
     box.classList.add("active");
     btn.classList.add("on");
-    btn.textContent="⏹  Stop Scanner";
-    msg.className="";
-    // Tell parent iframe to grow
-    window.parent.postMessage({{type:"scanner_open"}},"*");
+    btn.textContent = "⏹  Stop Scanner";
+    msg.className = "";
     tick();
-  }}catch(e){{
+  }} catch(e){{
     setMsg("Camera error: "+e.message,"err");
   }}
 }}
 
 function stop(){{
-  active=false;
-  if(raf)cancelAnimationFrame(raf);
-  if(stream)stream.getTracks().forEach(t=>t.stop());
-  stream=null;
+  active = false;
+  if(raf) cancelAnimationFrame(raf);
+  if(stream) stream.getTracks().forEach(t=>t.stop());
+  stream = null;
   box.classList.remove("active");
   btn.classList.remove("on");
-  btn.textContent="📷  Scan Item";
-  window.parent.postMessage({{type:"scanner_closed"}},"*");
+  btn.textContent = "📷  Scan Item";
 }}
 
 function tick(){{
-  if(!active)return;
-  if(vid.readyState===vid.HAVE_ENOUGH_DATA){{
-    cvs.width=vid.videoWidth;cvs.height=vid.videoHeight;
+  if(!active) return;
+  if(vid.readyState === vid.HAVE_ENOUGH_DATA){{
+    cvs.width=vid.videoWidth; cvs.height=vid.videoHeight;
     ctx.drawImage(vid,0,0,cvs.width,cvs.height);
-    const d=ctx.getImageData(0,0,cvs.width,cvs.height);
-    const code=jsQR(d.data,d.width,d.height,{{inversionAttempts:"dontInvert"}});
-    if(code&&!cooldown)handleQR(code.data);
+    const d = ctx.getImageData(0,0,cvs.width,cvs.height);
+    const code = jsQR(d.data,d.width,d.height,{{inversionAttempts:"dontInvert"}});
+    if(code && !cooldown) handleQR(code.data);
   }}
-  raf=requestAnimationFrame(tick);
+  raf = requestAnimationFrame(tick);
 }}
 
 function handleQR(raw){{
-  let pid=null;
+  let pid = null;
   try{{
-    const u=new URL(raw);
-    pid=u.searchParams.get("product_number");
-  }}catch(_){{pid=raw.trim();}}
-  if(!pid)return;
-  if(!(pid in CATALOG)){{setMsg("Product #"+pid+" not in catalog","err");return;}}
-  if(pid===lastPid)return;
-  lastPid=pid;
-  cooldown=true;
-  const qty=CATALOG[pid];
-  setMsg("✅ Added #"+pid+" — qty "+qty+". Updating cart…","ok");
-  // Navigate parent to add the scanned item via query param
-  // Short delay so user sees the success message before reload
+    const u = new URL(raw);
+    pid = u.searchParams.get("product_number");
+  }} catch(_){{ pid = raw.trim(); }}
+
+  if(!pid) return;
+  if(!(pid in CATALOG)){{ setMsg("Product #"+pid+" not in catalog","err"); return; }}
+
+  cooldown = true;
+  setMsg("✅ Added #"+pid+" — updating cart…","ok");
+
   setTimeout(()=>{{
-    const u=new URL(window.parent.location.href);
-    u.searchParams.set("scanned_pid",pid);
-    // Remove product_number so it doesn't re-trigger the URL-scan path
+    const u = new URL(window.parent.location.href);
+    u.searchParams.set("scanned_pid", pid);
     u.searchParams.delete("product_number");
-    window.parent.location.href=u.toString();
-  }},1200);
+    window.parent.location.href = u.toString();
+  }}, 1000);
 }}
 </script>
 </body>
 </html>
 """
 
-# Render scanner — tall enough for camera + status message
-scanner_container = st.empty()
-scanner_container.markdown("### 📷 Scan Items")
-st.caption("Tap **Scan Item**, point your camera at any product QR code — it adds to your cart automatically.")
+st.markdown("### 📷 Scan Items")
+st.caption("Tap **Scan Item**, point at a QR code — each scan adds to your cart.")
 components.html(scanner_html, height=440, scrolling=False)
 
 st.divider()
 
-# ── Cart (order summary only — no full catalog table) ─────────────────────────
+# ── Cart ───────────────────────────────────────────────────────────────────────
 st.markdown("### 🛒 Cart")
 
 order_items = []
@@ -253,31 +239,32 @@ for pid, qty in st.session_state["scan_qty_map"].items():
         row = catalog.loc[catalog["product_number"] == pid]
         if not row.empty:
             order_items.append({
-                "item": row.iloc[0]["item"],
+                "item":        row.iloc[0]["item"],
                 "product_number": pid,
-                "qty": qty,
+                "rec_qty":     int(row.iloc[0].get("multiplier", 1) or 1),  # FIX: rec qty column
+                "qty":         qty,
             })
 
 if order_items:
     cart_df = pd.DataFrame(order_items)
 
-    # Editable so qty can still be tweaked in the cart
     edited_cart = st.data_editor(
         cart_df,
         use_container_width=True,
         hide_index=True,
         column_config={
-            "item": st.column_config.TextColumn("Item", disabled=True),
+            "item":           st.column_config.TextColumn("Item", disabled=True),
             "product_number": st.column_config.TextColumn("Product #", disabled=True),
-            "qty": st.column_config.NumberColumn("Qty", min_value=0, step=1),
+            "rec_qty":        st.column_config.NumberColumn("Rec. Qty", disabled=True),
+            "qty":            st.column_config.NumberColumn("Qty", min_value=0, step=1),
         },
         key="cart_editor",
     )
 
-    # Sync qty changes back
+    # Sync qty edits back to session state
     rerun_needed = False
     for _, r in edited_cart.iterrows():
-        pid = str(r["product_number"])
+        pid     = str(r["product_number"])
         new_qty = int(r["qty"])
         if st.session_state["scan_qty_map"].get(pid) != new_qty:
             st.session_state["scan_qty_map"][pid] = new_qty
@@ -285,11 +272,13 @@ if order_items:
     if rerun_needed:
         st.rerun()
 
+    # FIX: use flag pattern so clear fires cleanly on next run
     if st.button("🧹 Clear cart"):
-        st.session_state["scan_qty_map"] = {}
+        st.session_state["do_clear"] = True
         st.rerun()
+
 else:
-    st.caption("Cart is empty — scan a QR code or visit a product link to add items.")
+    st.caption("Cart is empty — scan a QR code to add items.")
 
 st.divider()
 
@@ -303,8 +292,8 @@ if submitted:
     if not order_items:
         st.error("Cart is empty — scan some items first.")
     else:
-        orderer = orderer_name.strip() if orderer_name.strip() else "Anonymous"
-        order_df = pd.DataFrame(order_items)
+        orderer   = orderer_name.strip() if orderer_name.strip() else "Anonymous"
+        order_df  = pd.DataFrame(order_items)
 
         with st.spinner("Logging order…"):
             when_str = append_log(order_df, orderer)
