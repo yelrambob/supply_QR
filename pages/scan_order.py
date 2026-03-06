@@ -104,13 +104,15 @@ st.caption("Open the camera, scan one QR code at a time. Each scan adds to your 
 
 scan_result = qr_scanner(catalog=multiplier_map)
 
-# When the component returns a value, add it to the cart
+# When the component returns a value, add it to the cart.
+# Use a "last_scan" key to deduplicate — component returns last value on every rerun.
 if scan_result and isinstance(scan_result, dict):
-    pid = scan_result.get("product_number", "")
-    qty = scan_result.get("qty", 1)
-    if pid and pid in multiplier_map:
+    pid = str(scan_result.get("product_number", "")).strip()
+    qty = int(scan_result.get("qty", 1))
+    last = st.session_state.get("last_scan", {})
+    if pid and pid in multiplier_map and scan_result != last:
         st.session_state["cart"][pid] = qty
-        # Don't rerun — let Streamlit's natural component rerun handle it
+        st.session_state["last_scan"] = scan_result
 
 st.divider()
 
@@ -237,3 +239,4 @@ if submitted:
 
         st.session_state["cart"] = {}
         st.balloons()
+        
