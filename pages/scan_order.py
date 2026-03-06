@@ -78,8 +78,8 @@ if catalog.empty:
 
 catalog["product_number"] = catalog["product_number"].astype(str)
 
-# ── Pre-load QR item into qty_map on first load ──────────────
-if product_number_param and product_number_param not in st.session_state["scan_qty_map"]:
+# ── Pre-load QR item — update qty each time a new QR is scanned ─
+if product_number_param:
     st.session_state["scan_qty_map"][product_number_param] = default_qty
 
 # ══════════════════════════════════════════════════════════════
@@ -105,9 +105,9 @@ st.divider()
 
 # ── Orderer name ─────────────────────────────────────────────
 orderer_name = st.text_input(
-    "Your name *",
+    "Your name (optional)",
     placeholder="e.g. Jane Smith",
-    help="Required so the order can be attributed to you.",
+    help="Leave blank to submit as Anonymous.",
 )
 
 st.divider()
@@ -119,7 +119,7 @@ st.caption("The scanned item is pre-filled. Add more items by setting their quan
 table_rows = []
 for _, row in catalog.iterrows():
     pid = str(row["product_number"])
-    rec_qty = int(row.get("items_per_order", 1) or 1)
+    rec_qty = int(row.get("multiplier", 1) or 1)
     current_in_map = st.session_state["scan_qty_map"].get(pid, 0)
     table_rows.append({
         "product_number": pid,
@@ -192,12 +192,10 @@ notes = st.text_area(
 submitted = st.button("🧾 Submit Order", type="primary", use_container_width=True)
 
 if submitted:
-    if not orderer_name.strip():
-        st.error("Please enter your name before submitting.")
-    elif not order_items:
+    if not order_items:
         st.error("No items selected. Set at least one item qty above 0.")
     else:
-        orderer = orderer_name.strip()
+        orderer = orderer_name.strip() if orderer_name.strip() else "Anonymous"
         order_df = pd.DataFrame(order_items)
 
         with st.spinner("Logging order..."):
