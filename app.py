@@ -1,691 +1,271 @@
+"""
+pages/scan_order.py — Quick Supply Order
+
+How it works:
+- Each supply location has a fixed cart_id (e.g. "supply-room-1")
+- Item barcode labels encode: /scan_order?product_number=ABC&cart_id=supply-room-1
+- Scanning any item label with phone camera adds it to that location's Supabase cart
+- This page reads the cart from Supabase and shows it live
+- Submit sends one email with all items, clears the cart
+"""
+
 import streamlit as st
 import pandas as pd
-import zoneinfo
-from datetime import datetime
-from pathlib import Path
+import json
 import re
-import io
-import base64
+import uuid
+from pathlib import Path
+import sys
 
-from db.supabase_client import (
-    append_log,
-    read_log,
-    last_info_map,
-)
+APP_DIR = Path(__file__).resolve().parent.parent
+if str(APP_DIR) not in sys.path:
+    sys.path.insert(0, str(APP_DIR))
 
-from data.catalog import (
-    read_catalog,
-    write_catalog,
-)
+from data.catalog import read_catalog
+from services.email_service import send_email, smtp_ok, all_recipients
+from db.supabase_client import append_log
 
-from services.email_service import (
-    send_email,
-    smtp_ok,
-    all_recipients,
-)
+st.set_page_config(page_title="Quick Supply Order", page_icon="📱", layout="centered")
 
-st.set_page_config(page_title="Supply Ordering", page_icon="📦", layout="wide")
-
-# ---------------- Time ----------------
-NYC = zoneinfo.ZoneInfo("America/New_York")
-now = datetime.now(NYC).strftime("%Y-%m-%d %H:%M:%S")
-
-# ---------------- Paths ----------------
-APP_DIR = Path(__file__).resolve().parent
 DATA_DIR = APP_DIR / "data"
-DATA_DIR.mkdir(exist_ok=True)
-
-PEOPLE_PATH = DATA_DIR / "people.txt"
 EMAILS_PATH = DATA_DIR / "emails.csv"
+CART_TABLE  = "pending_carts"
 
-# ---------------- Load people ----------------
-@st.cache_data
-def read_people() -> list[str]:
-    if not PEOPLE_PATH.exists():
-        return []
-    try:
-        return [
-            ln.strip()
-            for ln in PEOPLE_PATH.read_text(encoding="utf-8").splitlines()
-            if ln.strip()
-        ]
-    except Exception as e:
-        st.warning(f"Couldn't read people.txt: {e}")
-        return []
 
-# ---------------- Load emails CSV ----------------
+@st.cache_resource
+def get_sb():
+    from supabase import create_client
+    return create_client(st.secrets["supabase"]["url"], st.secrets["supabase"]["key"])
+
+
 @st.cache_data
 def read_emails() -> pd.DataFrame:
     if not EMAILS_PATH.exists():
         return pd.DataFrame(columns=["name", "email"])
-
     try:
         df = pd.read_csv(EMAILS_PATH)
-    except Exception as e:
-        st.warning(f"Couldn't read emails.csv: {e}")
+    except Exception:
         return pd.DataFrame(columns=["name", "email"])
-
     df.columns = [str(c).strip().lower() for c in df.columns]
-
     email_re = re.compile(r"([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})")
     rows = []
-
     for _, r in df.iterrows():
-        raw = str(r.get("email", ""))
-        m = email_re.search(raw)
+        m = email_re.search(str(r.get("email", "")))
         if m:
-            rows.append(
-                {
-                    "name": str(r.get("name", "")),
-                    "email": m.group(1),
-                }
-            )
-
+            rows.append({"name": str(r.get("name", "")), "email": m.group(1)})
     return pd.DataFrame(rows)
 
-# ---------------- QR Code Generator ----------------
-def generate_qr_code(data: str, box_size: int = 6, border: int = 2) -> str:
-    """Generate a QR code as a base64-encoded PNG string."""
+
+# ── Supabase cart helpers ──────────────────────────────────────────────────────
+def cart_get(cart_id: str) -> dict:
     try:
-        import qrcode
-        from PIL import Image
+        res = get_sb().table(CART_TABLE).select("items").eq("cart_id", cart_id).execute()
+        if res.data:
+            return json.loads(res.data[0]["items"] or "{}")
+    except Exception:
+        pass
+    return {}
 
-        qr = qrcode.QRCode(
-            version=None,
-            error_correction=qrcode.constants.ERROR_CORRECT_M,
-            box_size=box_size,
-            border=border,
-        )
-        qr.add_data(data)
-        qr.make(fit=True)
+def cart_upsert(cart_id: str, items: dict, orderer: str = ""):
+    try:
+        get_sb().table(CART_TABLE).upsert({
+            "cart_id": cart_id,
+            "items":   json.dumps(items),
+            "orderer": orderer,
+        }).execute()
+    except Exception as e:
+        st.warning(f"Cart save error: {e}")
 
-        img = qr.make_image(fill_color="black", back_color="white")
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        buf.seek(0)
-        return base64.b64encode(buf.read()).decode("utf-8")
-    except ImportError:
-        return None
+def cart_clear(cart_id: str):
+    try:
+        get_sb().table(CART_TABLE).upsert({
+            "cart_id": cart_id,
+            "items":   "{}",
+            "orderer": "",
+        }).execute()
+    except Exception:
+        pass
 
-# ---------------- Session state ----------------
-if "orderer" not in st.session_state:
-    st.session_state["orderer"] = None
 
-if "qty_map" not in st.session_state:
-    st.session_state["qty_map"] = {}
-
-# ---------------- UI ----------------
-st.title("📦 Supply Ordering & Inventory Tracker")
-
-people = read_people()
-emails_df = read_emails()
+# ── Load data ──────────────────────────────────────────────────────────────────
 catalog = read_catalog()
-logs = read_log()
+emails_df = read_emails()
 
-email_ready = "✅" if smtp_ok() else "❌"
-st.caption(
-    f"Loaded {len(catalog)} catalog rows • "
-    f"{len(logs)} log rows • "
-    f"Email configured: {email_ready}"
+if catalog.empty:
+    st.error("Catalog is not available.")
+    st.stop()
+
+catalog["product_number"] = catalog["product_number"].astype(str)
+multiplier_map = {
+    str(r["product_number"]): int(r.get("multiplier", 1) or 1)
+    for _, r in catalog.iterrows()
+}
+
+# ── URL params ─────────────────────────────────────────────────────────────────
+params               = st.query_params
+product_number_param = params.get("product_number", "").strip()
+qty_param            = params.get("qty", "").strip()
+cart_id              = params.get("cart_id", "").strip()
+
+# If no cart_id in URL, show a friendly landing page
+if not cart_id:
+    st.markdown(
+        '<h2 style="text-align:center;padding:1rem 0 0.5rem">📱 Quick Supply Order</h2>'
+        '<p style="text-align:center;color:#666">Scan an item label to start your order.<br>'
+        'Make sure you are using the correct location QR code.</p>',
+        unsafe_allow_html=True,
+    )
+    st.stop()
+
+# ── Process incoming scan ──────────────────────────────────────────────────────
+# Load current cart from Supabase
+cart = cart_get(cart_id)
+just_added = None
+
+if product_number_param and product_number_param in multiplier_map:
+    try:
+        qty = max(1, int(qty_param)) if qty_param else multiplier_map[product_number_param]
+    except ValueError:
+        qty = multiplier_map[product_number_param]
+    cart[product_number_param] = qty
+    cart_upsert(cart_id, cart)
+    just_added = product_number_param
+    # Clean URL — remove product_number/qty but keep cart_id
+    st.query_params.update({"cart_id": cart_id})
+
+# ── Header ─────────────────────────────────────────────────────────────────────
+st.markdown(
+    f'<h2 style="text-align:center;padding:0.5rem 0 0.1rem">📱 Quick Supply Order</h2>'
+    f'<p style="text-align:center;color:#888;font-size:.85rem">Cart: {cart_id}</p>',
+    unsafe_allow_html=True,
 )
 
-# ---------------- Current Order Preview ----------------
-selected_items = []
-for pid, qty in st.session_state["qty_map"].items():
+if just_added:
+    row = catalog.loc[catalog["product_number"] == just_added]
+    name = row.iloc[0]["item"] if not row.empty else just_added
+    st.success(f"✅ **{name}** added — {len(cart)} item(s) in cart. Scan another or submit.")
+elif cart:
+    st.info(f"🛒 {len(cart)} item(s) in cart. Scan more items or submit below.")
+else:
+    st.info("Cart is empty — scan an item barcode label to add items.")
+
+st.divider()
+
+orderer_name = st.text_input(
+    "Your name (optional)",
+    placeholder="Leave blank to submit as Anonymous",
+)
+st.divider()
+
+# ── Cart — live from Supabase ─────────────────────────────────────────────────
+st.markdown("### 🛒 Cart")
+
+order_items = []
+for pid, qty in cart.items():
     if qty > 0:
-        row = catalog.loc[catalog["product_number"].astype(str) == str(pid)]
+        row = catalog.loc[catalog["product_number"] == pid]
         if not row.empty:
-            selected_items.append(
-                {
-                    "item": row.iloc[0]["item"],
-                    "product_number": pid,
-                    "qty": qty,
-                }
-            )
+            order_items.append({
+                "item":           row.iloc[0]["item"],
+                "product_number": pid,
+                "rec_qty":        int(row.iloc[0].get("multiplier", 1) or 1),
+                "qty":            qty,
+            })
 
-if selected_items:
-    st.markdown("### 🛒 Current Order (in progress)")
-    st.dataframe(pd.DataFrame(selected_items), hide_index=True, use_container_width=True)
+if order_items:
+    cart_df = pd.DataFrame(order_items)
+    edited  = st.data_editor(
+        cart_df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "item":           st.column_config.TextColumn("Item", disabled=True),
+            "product_number": st.column_config.TextColumn("Product #", disabled=True),
+            "rec_qty":        st.column_config.NumberColumn("Rec. Qty", disabled=True),
+            "qty":            st.column_config.NumberColumn("Qty", min_value=0, step=1),
+        },
+        key="cart_editor",
+    )
+    changed = False
+    for _, r in edited.iterrows():
+        pid, new_qty = str(r["product_number"]), int(r["qty"])
+        if cart.get(pid) != new_qty:
+            cart[pid] = new_qty
+            changed = True
+    if changed:
+        cart_upsert(cart_id, cart, orderer_name.strip())
 
-    product_numbers = [i["product_number"] for i in selected_items]
-    st.markdown(f"**Product Numbers:** {', '.join(product_numbers)}")
-
-    if st.button("🧹 Clear Current Order"):
-        st.session_state["qty_map"] = {}
+    if st.button("🧹 Clear cart"):
+        cart_clear(cart_id)
+        st.query_params.update({"cart_id": cart_id})
         st.rerun()
 else:
-    st.caption("🛒 No items currently selected.")
+    st.caption("Cart is empty — scan item barcodes to add.")
 
-# ---------------- Tabs ----------------
-tabs = st.tabs(["Create Order", "Adjust Inventory", "Catalog", "Order Logs", "QR Codes", "Barcode Labels"])
+st.divider()
+notes = st.text_area("Notes (optional)", placeholder="Any extra context…", height=80)
 
-# =====================================================
-# Create Order
-# =====================================================
-with tabs[0]:
-    if catalog.empty:
-        st.info("No catalog found.")
+# ── Submit ─────────────────────────────────────────────────────────────────────
+submitted = st.button("🧾 Submit Order", type="primary", use_container_width=True)
+
+if submitted:
+    if not order_items:
+        st.error("Cart is empty.")
     else:
-        c1, c2 = st.columns([2, 3])
+        orderer  = orderer_name.strip() if orderer_name.strip() else "Anonymous"
+        order_df = pd.DataFrame(order_items)
 
-        with c1:
-            current_orderer = (
-                st.session_state["orderer"]
-                or (people[0] if people else "Unknown")
-            )
+        with st.spinner("Logging order…"):
+            when_str = append_log(order_df, orderer)
 
-            orderer = st.selectbox(
-                "Who is ordering?",
-                options=(people if people else ["Unknown"]),
-                index=(
-                    people.index(current_orderer)
-                    if people and current_orderer in people
-                    else 0
-                ),
-            )
-            st.session_state["orderer"] = orderer
+        email_sent, email_error, recipients = False, None, []
 
-        with c2:
-            search = st.text_input("Search items")
-
-        last_map = last_info_map()
-        table = catalog.merge(
-            last_map, on=["item", "product_number"], how="left"
-        )
-
-        for c in ["last_ordered_at", "last_qty", "last_orderer"]:
-            if c not in table.columns:
-                table[c] = pd.NA
-
-        table["last_ordered_at"] = pd.to_datetime(
-            table["last_ordered_at"], errors="coerce"
-        )
-
-        table = (
-            table.sort_values(
-                ["last_ordered_at", "item"],
-                ascending=[False, True],
-                na_position="last",
-            )
-            .reset_index(drop=True)
-        )
-
-        table["product_number"] = table["product_number"].astype(str)
-        table["qty"] = (
-            table["product_number"]
-            .map(st.session_state["qty_map"])
-            .fillna(0)
-            .astype(int)
-        )
-
-        if search:
-            mask = (
-                table["item"].str.contains(search, case=False, na=False)
-                | table["product_number"].str.contains(search, case=False, na=False)
-            )
-            table = table[mask]
-
-        edited = st.data_editor(
-            table[
-                [
-                    "qty",
-                    "item",
-                    "product_number",
-                    "multiplier",
-                    "items_per_order",
-                    "current_qty",
-                    "price",
-                    "last_ordered_at",
-                    "last_qty",
-                    "last_orderer",
-                ]
-            ],
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "qty": st.column_config.NumberColumn("Qty", min_value=0, step=1),
-                "item": st.column_config.TextColumn("Item", disabled=True),
-                "product_number": st.column_config.TextColumn("Product #", disabled=True),
-                "multiplier": st.column_config.NumberColumn("Multiplier", disabled=True),
-                "items_per_order": st.column_config.NumberColumn("Items/Order", disabled=True),
-                "current_qty": st.column_config.NumberColumn("Current Qty", disabled=True),
-                "price": st.column_config.NumberColumn("Price", disabled=True),
-                "last_ordered_at": st.column_config.DatetimeColumn(
-                    "Last ordered", format="YYYY-MM-DD HH:mm", disabled=True
-                ),
-                "last_qty": st.column_config.NumberColumn("Last qty", disabled=True),
-                "last_orderer": st.column_config.TextColumn("Last by", disabled=True),
-            },
-            key="order_editor",
-        )
-
-        rerun_needed = False
-        for _, r in edited.iterrows():
-            pid = str(r["product_number"])
-            new_qty = int(r["qty"])
-            if st.session_state["qty_map"].get(pid) != new_qty:
-                st.session_state["qty_map"][pid] = new_qty
-                rerun_needed = True
-
-        if rerun_needed:
-            st.rerun()
-
-        # ---------------- Generate & Log Order ----------------
-        if st.button("🧾 Generate & Log Order"):
-            rows = []
-            for pid, qty in st.session_state["qty_map"].items():
-                if qty > 0:
-                    row = catalog.loc[
-                        catalog["product_number"].astype(str) == str(pid)
-                    ]
+        if smtp_ok():
+            recipients = all_recipients(emails_df)
+            if recipients:
+                product_groups, current_group, running_total, details_lines = [], [], 0.0, []
+                for it in order_items:
+                    pid, qty = it["product_number"], it["qty"]
+                    row = catalog.loc[catalog["product_number"].astype(str) == str(pid)]
                     if not row.empty:
-                        rows.append(
-                            {
-                                "item": row.iloc[0]["item"],
-                                "product_number": pid,
-                                "qty": qty,
-                            }
+                        item_name = row.iloc[0]["item"]
+                        price     = float(row.iloc[0].get("price", 0) or 0)
+                        total     = qty * price
+                        if running_total + total > 4999 and current_group:
+                            product_groups.append((current_group.copy(), running_total))
+                            current_group, running_total = [], 0.0
+                        running_total += total
+                        current_group.append(pid)
+                        details_lines.append(
+                            f"<label><input type='checkbox'/> - {item_name} (#{pid}): {qty}</label>"
                         )
-
-            order_df = pd.DataFrame(rows)
-
-            if not order_df.empty:
-                when_str = append_log(order_df, orderer)
-
-                if smtp_ok():
-                    recipients = all_recipients(emails_df)
-
-                    if recipients:
-                        product_groups = []
-                        current_group = []
-                        running_total = 0.0
-                        details_lines = []
-
-                        for _, r in order_df.iterrows():
-                            pid = r["product_number"]
-                            qty = r["qty"]
-                            row = catalog.loc[
-                                catalog["product_number"].astype(str) == str(pid)
-                            ]
-
-                            price = float(row.iloc[0].get("price", 0) or 0)
-                            total = qty * price
-
-                            if running_total + total > 4999 and current_group:
-                                product_groups.append(
-                                    (current_group.copy(), running_total)
-                                )
-                                current_group = []
-                                running_total = 0.0
-
-                            running_total += total
-                            current_group.append(pid)
-
-                            details_lines.append(
-                                f"<label><input type='checkbox'/> "
-                                f"- {row.iloc[0]['item']} (#{pid}): {qty}</label>"
-                            )
-
-                        if current_group:
-                            product_groups.append(
-                                (current_group, running_total)
-                            )
-
-                        group_lines = [
-                            f"<label><input type='checkbox'/> "
-                            f"{', '.join(map(str, g))} = ${t:,.0f}</label>"
-                            for g, t in product_groups
-                        ]
-
-                        body = f"""
-                        <html><body>
-                        <p><strong>New supply order at {when_str}</strong><br>
-                        Ordered by: {orderer}</p>
-
-                        <p><strong>Details:</strong><br>
-                        {"<br>".join(details_lines)}</p>
-
-                        <p><strong>Product:</strong><br>
-                        {"<br>".join(group_lines)}</p>
-                        </body></html>
-                        """
-
-                        try:
-                            send_email(
-                                "Supply Order Logged",
-                                body,
-                                recipients,
-                            )
-                            st.success(
-                                f"Emailed {len(recipients)} recipient(s)."
-                            )
-                        except Exception as e:
-                            st.error(f"Email failed: {e}")
-
-                st.session_state["qty_map"] = {}
-                st.rerun()
-
-# =====================================================
-# Adjust Inventory
-# =====================================================
-with tabs[1]:
-    if catalog.empty:
-        st.info("No catalog found.")
-    else:
-        edited = st.data_editor(
-            catalog.copy(),
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "item": st.column_config.TextColumn("Item", disabled=True),
-                "product_number": st.column_config.TextColumn("Product #", disabled=True),
-                "multiplier": st.column_config.NumberColumn("Multiplier", min_value=1),
-                "items_per_order": st.column_config.NumberColumn("Items/Order", min_value=1),
-                "current_qty": st.column_config.NumberColumn("Current Qty", min_value=0),
-                "sort_order": st.column_config.NumberColumn("Sort order", min_value=0),
-                "price": st.column_config.NumberColumn("Price ($)", min_value=0.0),
-            },
-            key="inventory_editor",
-        )
-
-        if st.button("💾 Save inventory changes"):
-            write_catalog(edited)
-            st.success("Inventory saved.")
-
-# =====================================================
-# Catalog
-# =====================================================
-with tabs[2]:
-    st.dataframe(catalog, use_container_width=True, hide_index=True)
-
-# =====================================================
-# Order Logs
-# =====================================================
-with tabs[3]:
-    if logs.empty:
-        st.info("No orders logged yet.")
-    else:
-        st.dataframe(logs, use_container_width=True, hide_index=True)
-        st.download_button(
-            "⬇️ Download full log (CSV)",
-            data=logs.to_csv(index=False).encode("utf-8"),
-            file_name="order_log.csv",
-            mime="text/csv",
-        )
-
-# =====================================================
-# QR Codes
-# =====================================================
-with tabs[4]:
-    st.markdown("## 📱 QR Codes for Catalog Items")
-    st.markdown(
-        "Each QR code links directly to a scan-order page pre-loaded with that item "
-        "and its recommended order quantity. Anyone can scan and submit an order."
-    )
-
-    if catalog.empty:
-        st.info("No catalog items found.")
-    else:
-        # --- App URL configuration ---
-        st.markdown("### ⚙️ Setup")
-
-        # Auto-detect base URL from browser request headers
-        try:
-            host = st.context.headers.get("host", "")
-            detected_url = ("https://" + host) if host and not host.startswith("http") else host
-        except Exception:
-            detected_url = "https://qrsupply.streamlit.app"
-
-        app_base_url = st.text_input(
-            "Your Streamlit app's public URL",
-            value=detected_url or "https://qrsupply.streamlit.app",
-            help=(
-                "Auto-detected from your browser. Edit only if incorrect. "
-                "QR codes will link to: <your-url>/scan_order?product_number=...&qty=..."
-            ),
-        )
-
-        if not app_base_url:
-            st.info("👆 Enter your app's public URL above to generate QR codes.")
-        else:
-            app_base_url = app_base_url.rstrip("/")
-
-            # Check if qrcode library is available
-            try:
-                import qrcode  # noqa: F401
-                qr_available = True
-            except ImportError:
-                qr_available = False
-
-            if not qr_available:
-                st.warning(
-                    "⚠️ The `qrcode` library is not installed. "
-                    "Run `pip install qrcode[pil]` in your environment, then restart the app. "
-                    "The scan links below are still correct — you can use them with any external QR generator."
-                )
-
-            # --- General QR code for the order page ---
-            st.markdown("### 🌐 General Order Page QR")
-            st.caption("Post this anywhere — it opens the full order page with no item pre-selected.")
-            general_url = f"{app_base_url}/scan_order"
-            if qr_available:
-                b64 = generate_qr_code(general_url, box_size=6, border=2)
-                if b64:
-                    col_a, col_b = st.columns([1, 2])
-                    with col_a:
-                        st.markdown(
-                            f'<img src="data:image/png;base64,{b64}" width="160" style="display:block;margin:4px 0"/>',
-                            unsafe_allow_html=True,
-                        )
-                    with col_b:
-                        st.markdown(f"**URL:** `{general_url}`")
-                        st.caption("Anyone who scans this lands on the order page and can manually select items or scan individual product QR codes to build their cart.")
-            else:
-                st.code(general_url, language=None)
-
-            st.markdown("### 📦 Individual Item QR Codes")
-            st.caption("Each code pre-loads that item with its recommended qty. Scanning multiple codes in sequence builds one combined order.")
-
-            # --- Filter/search ---
-            search_qr = st.text_input("Filter items", placeholder="Search by name or product #")
-
-            display_catalog = catalog.copy()
-            display_catalog["product_number"] = display_catalog["product_number"].astype(str)
-
-            if search_qr:
-                mask = (
-                    display_catalog["item"].str.contains(search_qr, case=False, na=False)
-                    | display_catalog["product_number"].str.contains(search_qr, case=False, na=False)
-                )
-                display_catalog = display_catalog[mask]
-
-            if display_catalog.empty:
-                st.info("No items match that search.")
-            else:
-                # --- Layout selector ---
-                cols_count = st.radio(
-                    "Cards per row", [2, 3, 4], index=1, horizontal=True
-                )
-
-                # --- Download all QR codes as a zip (if qrcode available) ---
-                if qr_available:
-                    if st.button("⬇️ Download all QR codes as ZIP"):
-                        import zipfile
-
-                        zip_buf = io.BytesIO()
-                        with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                            for _, row in display_catalog.iterrows():
-                                pid = str(row["product_number"])
-                                item_name = str(row["item"])
-                                rec_qty = int(row.get("multiplier", 1) or 1)
-                                url = (
-                                    f"{app_base_url}/scan_order"
-                                    f"?product_number={pid}"
-                                    f"&qty={rec_qty}"
-                                )
-                                b64 = generate_qr_code(url)
-                                if b64:
-                                    img_bytes = base64.b64decode(b64)
-                                    safe_name = re.sub(r"[^a-zA-Z0-9_\-]", "_", item_name)
-                                    zf.writestr(f"qr_{safe_name}_{pid}.png", img_bytes)
-
-                        zip_buf.seek(0)
-                        st.download_button(
-                            "📦 Click here to save ZIP",
-                            data=zip_buf.getvalue(),
-                            file_name="supply_qr_codes.zip",
-                            mime="application/zip",
-                        )
-
-                # --- Render cards ---
-                rows_iter = [
-                    display_catalog.iloc[i : i + cols_count]
-                    for i in range(0, len(display_catalog), cols_count)
+                if current_group:
+                    product_groups.append((current_group, running_total))
+                group_lines = [
+                    f"<label><input type='checkbox'/> "
+                    f"{', '.join(chr(34)+p+chr(34) for p in g)} = ${t:,.0f}</label>"
+                    for g, t in product_groups
                 ]
+                notes_html = f"<p><strong>Notes:</strong> {notes}</p>" if notes.strip() else ""
+                body = f"""<html><body>
+<p><strong>📱 Scan order [{cart_id}] at {when_str}</strong><br>Ordered by: {orderer}</p>
+<p><strong>Details:</strong><br>{"<br>".join(details_lines)}</p>
+<p><strong>Product:</strong><br>{"<br>".join(group_lines)}</p>
+{notes_html}
+</body></html>"""
+                try:
+                    send_email("Supply Order Logged", body, recipients)
+                    email_sent = True
+                except Exception as e:
+                    email_error = str(e)
 
-                for row_group in rows_iter:
-                    cols = st.columns(cols_count)
-                    for col, (_, item_row) in zip(cols, row_group.iterrows()):
-                        pid = str(item_row["product_number"])
-                        item_name = str(item_row["item"])
-                        rec_qty = int(item_row.get("multiplier", 1) or 1)
-                        price = item_row.get("price", None)
-                        current_qty = item_row.get("current_qty", None)
-
-                        scan_url = (
-                            f"{app_base_url}/scan_order"
-                            f"?product_number={pid}"
-                            f"&qty={rec_qty}"
-                        )
-
-                        with col:
-                            with st.container(border=True):
-                                st.markdown(f"**{item_name}**")
-                                st.caption(f"Product #: `{pid}`")
-
-                                meta_parts = [f"📦 Rec. order: **{rec_qty}**"]
-                                if price:
-                                    meta_parts.append(f"💵 ${float(price):.2f}/unit")
-                                if current_qty is not None:
-                                    meta_parts.append(f"🗃️ In stock: {int(current_qty)}")
-                                st.markdown(" &nbsp;|&nbsp; ".join(meta_parts))
-
-                                if qr_available:
-                                    b64 = generate_qr_code(scan_url, box_size=5, border=2)
-                                    if b64:
-                                        st.markdown(
-                                            f'<img src="data:image/png;base64,{b64}" '
-                                            f'width="180" style="display:block;margin:8px auto;"/>',
-                                            unsafe_allow_html=True,
-                                        )
-                                else:
-                                    # Show the URL so they can use an external generator
-                                    st.code(scan_url, language=None)
-
-                                st.markdown(
-                                    f'<a href="{scan_url}" target="_blank" '
-                                    f'style="font-size:0.8em;">🔗 Scan link</a>',
-                                    unsafe_allow_html=True,
-                                )
-
-# =====================================================
-# Barcode Labels
-# =====================================================
-with tabs[5]:
-    st.markdown("## 🏷️ Barcode Labels for Scanning")
-    st.markdown(
-        "Print these labels and stick them on your supply items. "
-        "Scan them with the in-app scanner on the order page to add items to your cart."
-    )
-
-    if catalog.empty:
-        st.info("No catalog items found.")
-    else:
-        try:
-            import python_barcode as barcode
-            from python_barcode.writer import ImageWriter
-            import io, base64
-            barcode_available = True
-        except ImportError:
-            barcode_available = False
-
-        if not barcode_available:
-            st.warning(
-                "Add `python-barcode[images]` and `Pillow` to requirements.txt to generate barcode images. "
-                "The label data below is correct — you can paste product numbers into any barcode generator."
-            )
-
-        search_bc = st.text_input("Filter items", placeholder="Search by name or product #", key="bc_search")
-        cols_count_bc = st.radio("Labels per row", [2, 3, 4], index=2, horizontal=True, key="bc_cols")
-
-        display_bc = catalog.copy()
-        display_bc["product_number"] = display_bc["product_number"].astype(str)
-        if search_bc:
-            mask = (
-                display_bc["item"].str.contains(search_bc, case=False, na=False)
-                | display_bc["product_number"].str.contains(search_bc, case=False, na=False)
-            )
-            display_bc = display_bc[mask]
-
-        if display_bc.empty:
-            st.info("No items match.")
-        else:
-            # Download all as ZIP
-            if barcode_available and st.button("⬇️ Download all barcode labels as ZIP", key="bc_zip"):
-                import zipfile
-                zip_buf = io.BytesIO()
-                CODE128 = barcode.get_barcode_class("code128")
-                with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                    for _, row in display_bc.iterrows():
-                        pid = str(row["product_number"])
-                        item_name = str(row["item"])
-                        try:
-                            buf = io.BytesIO()
-                            bc = CODE128(pid, writer=ImageWriter())
-                            bc.write(buf, options={"write_text": True, "font_size": 10, "text_distance": 4})
-                            buf.seek(0)
-                            safe = re.sub(r"[^a-zA-Z0-9_\-]", "_", item_name)
-                            zf.writestr(f"barcode_{safe}_{pid}.png", buf.read())
-                        except Exception:
-                            pass
-                zip_buf.seek(0)
-                st.download_button("📦 Save ZIP", data=zip_buf.getvalue(),
-                    file_name="barcode_labels.zip", mime="application/zip", key="bc_zip_dl")
-
-            # Render label cards
-            rows_iter = [
-                display_bc.iloc[i: i + cols_count_bc]
-                for i in range(0, len(display_bc), cols_count_bc)
-            ]
-            for row_group in rows_iter:
-                cols = st.columns(cols_count_bc)
-                for col, (_, item_row) in zip(cols, row_group.iterrows()):
-                    pid       = str(item_row["product_number"])
-                    item_name = str(item_row["item"])
-                    rec_qty   = int(item_row.get("multiplier", 1) or 1)
-                    with col:
-                        with st.container(border=True):
-                            st.markdown(f"**{item_name}**")
-                            st.caption(f"Product #: `{pid}`  •  Rec. qty: {rec_qty}")
-                            if barcode_available:
-                                try:
-                                    CODE128 = barcode.get_barcode_class("code128")
-                                    buf = io.BytesIO()
-                                    bc = CODE128(pid, writer=ImageWriter())
-                                    bc.write(buf, options={
-                                        "write_text": True,
-                                        "font_size": 10,
-                                        "text_distance": 4,
-                                        "module_height": 8.0,
-                                        "quiet_zone": 2.0,
-                                    })
-                                    buf.seek(0)
-                                    b64 = base64.b64encode(buf.read()).decode()
-                                    st.markdown(
-                                        f'<img src="data:image/png;base64,{b64}" '                                        f'style="width:100%;display:block;margin:4px 0"/>',
-                                        unsafe_allow_html=True,
-                                    )
-                                except Exception as e:
-                                    st.caption(f"Barcode error: {e}")
-                            else:
-                                st.code(pid, language=None)
+        cart_clear(cart_id)
+        st.success("✅ Order submitted!")
+        st.markdown(f"**Time:** {when_str}  |  **By:** {orderer}  |  **Location:** {cart_id}")
+        for it in order_items:
+            st.markdown(f"- {it['item']} (#{it['product_number']}): **{it['qty']}**")
+        if email_sent:
+            st.info(f"📧 Email sent to {len(recipients)} recipient(s).")
+        elif email_error:
+            st.warning(f"Logged but email failed: {email_error}")
+        st.balloons()
