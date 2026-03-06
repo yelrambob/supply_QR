@@ -495,7 +495,7 @@ with tabs[4]:
                             for _, row in display_catalog.iterrows():
                                 pid = str(row["product_number"])
                                 item_name = str(row["item"])
-                                rec_qty = int(row.get("items_per_order", 1) or 1)
+                                rec_qty = int(row.get("multiplier", 1) or 1)
                                 url = (
                                     f"{app_base_url}/scan_order"
                                     f"?product_number={pid}"
@@ -526,7 +526,7 @@ with tabs[4]:
                     for col, (_, item_row) in zip(cols, row_group.iterrows()):
                         pid = str(item_row["product_number"])
                         item_name = str(item_row["item"])
-                        rec_qty = int(item_row.get("items_per_order", 1) or 1)
+                        rec_qty = int(item_row.get("multiplier", 1) or 1)
                         price = item_row.get("price", None)
                         current_qty = item_row.get("current_qty", None)
 
