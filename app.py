@@ -447,8 +447,8 @@ with tabs[4]:
             qr_available = False
 
         try:
-            import python_barcode as _pbc
-            from python_barcode.writer import ImageWriter as _IW
+            import barcode as _pbc
+            from barcode.writer import ImageWriter as _IW
             bc_available = True
         except ImportError:
             bc_available = False
