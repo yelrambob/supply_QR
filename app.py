@@ -352,7 +352,7 @@ with tabs[0]:
 
                         try:
                             send_email(
-                                "Supply Order Logged",
+                                "Supplies Requested",
                                 body,
                                 recipients,
                             )
