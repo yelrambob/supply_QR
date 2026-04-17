@@ -313,14 +313,31 @@ def live_cart():
                 })
 
     if order_items:
-        for it in order_items:
-            st.markdown(f"- {it['item']}")
-
-        if st.button("🧹 Clear cart"):
+        count = len(order_items)
+        st.markdown(
+            f'<div style="background:#1a1a2e;border:2px solid #0068c9;border-radius:12px;padding:12px 14px;margin-bottom:10px">'
+            f'<div style="color:#7eb8f7;font-size:.78rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;margin-bottom:8px">'
+            f'🛒 Cart &nbsp;·&nbsp; {count} item{"s" if count != 1 else ""}</div>'
+            + "".join(
+                f'<div style="display:flex;align-items:center;padding:7px 0;border-bottom:1px solid #2a2a3e">'
+                f'<span style="font-size:1.1rem;margin-right:8px">📦</span>'
+                f'<span style="color:#f0f0f0;font-size:.95rem">{it["item"]}</span>'
+                f'</div>'
+                for it in order_items
+            )
+            + "</div>",
+            unsafe_allow_html=True,
+        )
+        if st.button("🧹 Clear cart", use_container_width=True):
             cart_clear(cart_id)
             st.rerun()
     else:
-        st.caption("Cart is empty — scan item barcodes above.")
+        st.markdown(
+            '<div style="background:#1a1a2e;border:2px dashed #444;border-radius:12px;'
+            'padding:20px;text-align:center;color:#888;font-size:.9rem">'
+            '🛒 Cart is empty — scan items above</div>',
+            unsafe_allow_html=True,
+        )
 
     st.divider()
 
