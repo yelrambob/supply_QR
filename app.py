@@ -533,9 +533,16 @@ with tabs[4]:
                 margin_top_in  = st.number_input("Top margin (in)", value=0.50, step=0.01, format="%.3f", key="lbl_mt")
             dim_col4, dim_col5 = st.columns(2)
             with dim_col4:
-                h_gap_in = st.number_input("Horizontal gap between labels (in)", value=0.13, step=0.01, format="%.3f", key="lbl_hgap")
+                h_gap_in = st.number_input("Horizontal gap between labels (in)", value=0.13, step=0.005, format="%.3f", key="lbl_hgap")
             with dim_col5:
-                v_gap_in = st.number_input("Vertical gap between labels (in)", value=0.0, step=0.01, format="%.3f", key="lbl_vgap")
+                v_gap_in = st.number_input("Vertical gap between labels (in)", value=0.0, step=0.005, format="%.3f", key="lbl_vgap")
+            row_pitch = lbl_h_in + v_gap_in
+            col_pitch = lbl_w_in + h_gap_in
+            st.caption(
+                f"Row pitch (label height + v-gap): **{row_pitch:.3f} in** — "
+                f"if rows drift **up**, increase v-gap; if rows drift **down**, decrease it. "
+                f"Column pitch: **{col_pitch:.3f} in**."
+            )
 
             # ── PDF generation ─────────────────────────────────────────────
             if bc_available:
