@@ -1,4 +1,4 @@
-Item,Product_number,Multiplier_per_box,Recommended_qty_per_order,price
+item,product_number,multiplier,items_per_order,price
 Xtra Small Nitrile Gloves,179887,1,10,78
 Small Nitrile Gloves,48730,10,1,8
 Medium Nitrile Gloves,48731,10,1,8
