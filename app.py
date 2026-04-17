@@ -262,7 +262,7 @@ with tabs[0]:
         rerun_needed = False
         for _, r in edited.iterrows():
             pid = str(r["product_number"])
-            new_qty = int(r["qty"])
+            new_qty = int(r["qty"]) if pd.notna(r["qty"]) else 0
             if st.session_state["qty_map"].get(pid) != new_qty:
                 st.session_state["qty_map"][pid] = new_qty
                 rerun_needed = True
@@ -296,45 +296,43 @@ with tabs[0]:
                     recipients = all_recipients(emails_df)
 
                     if recipients:
-                        product_groups = []
-                        current_group = []
-                        running_total = 0.0
-                        details_lines = []
-
+                        # Build item list with prices
+                        items = []
                         for _, r in order_df.iterrows():
                             pid = r["product_number"]
                             qty = r["qty"]
                             row = catalog.loc[
                                 catalog["product_number"].astype(str) == str(pid)
                             ]
-
                             price = float(row.iloc[0].get("price", 0) or 0)
-                            total = qty * price
+                            items.append((pid, qty, row.iloc[0]["item"], qty * price))
 
-                            if running_total + total > 4999 and current_group:
-                                product_groups.append(
-                                    (current_group.copy(), running_total)
-                                )
-                                current_group = []
-                                running_total = 0.0
+                        # First-fit bin packing: place each item in the first group with room
+                        bins: list[list[tuple]] = []
+                        bin_totals: list[float] = []
+                        for item in items:
+                            pid, qty, item_name, total = item
+                            placed = False
+                            for i, bin_total in enumerate(bin_totals):
+                                if bin_total + total <= 4999:
+                                    bins[i].append(item)
+                                    bin_totals[i] += total
+                                    placed = True
+                                    break
+                            if not placed:
+                                bins.append([item])
+                                bin_totals.append(total)
 
-                            running_total += total
-                            current_group.append(pid)
-
-                            details_lines.append(
-                                f"<label><input type='checkbox'/> "
-                                f"- {row.iloc[0]['item']} (#{pid}): {qty}</label>"
-                            )
-
-                        if current_group:
-                            product_groups.append(
-                                (current_group, running_total)
-                            )
-
+                        # Details and groups share the same group-first order
+                        details_lines = [
+                            f"<label><input type='checkbox'/> - {item_name} (#{pid}): {qty}</label>"
+                            for group in bins
+                            for pid, qty, item_name, _ in group
+                        ]
                         group_lines = [
                             f"<label><input type='checkbox'/> "
-                            f"{', '.join(map(str, g))} = ${t:,.0f}</label>"
-                            for g, t in product_groups
+                            f"{', '.join(str(pid) for pid, *_ in grp)} = ${sub:,.0f}</label>"
+                            for grp, sub in zip(bins, bin_totals)
                         ]
 
                         body = f"""
