@@ -44,6 +44,14 @@ def read_catalog() -> pd.DataFrame:
             ]
         )
 
+    # Normalize column names: lowercase, then map legacy names
+    df.columns = df.columns.str.strip().str.lower()
+    df = df.rename(columns={
+        "product_number": "product_number",
+        "multiplier_per_box": "multiplier",
+        "recommended_qty_per_order": "items_per_order",
+    })
+
     # Ensure required columns exist
     for c in [
         "item",

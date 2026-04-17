@@ -157,7 +157,7 @@ else:
     st.caption("🛒 No items currently selected.")
 
 # ---------------- Tabs ----------------
-tabs = st.tabs(["Create Order", "Adjust Inventory", "Catalog", "Order Logs", "QR Codes", "Barcode Labels"])
+tabs = st.tabs(["Create Order", "Adjust Inventory", "Catalog", "Order Logs", "QR & Barcodes"])
 
 # =====================================================
 # Create Order
@@ -675,8 +675,3 @@ with tabs[4]:
                             else:
                                 st.code(pid, language=None)
 
-# =====================================================
-# Barcode Labels (legacy tab kept for compatibility)
-# =====================================================
-with tabs[5]:
-    st.info("Barcode labels have moved to the **QR Codes & Labels** tab.")
