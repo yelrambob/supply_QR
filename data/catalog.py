@@ -44,16 +44,24 @@ def read_catalog() -> pd.DataFrame:
             ]
         )
 
-    # Ensure required columns exist
-    for c in [
-        "item",
-        "product_number",
-        "multiplier",
-        "items_per_order",
-        "current_qty",
-        "sort_order",
-        "price",
-    ]:
+    # Normalize column names: lowercase + map known variants
+    df.columns = [str(c).strip().lower() for c in df.columns]
+    col_aliases = {
+        "product_number":            "product_number",
+        "product number":            "product_number",
+        "multiplier_per_box":        "multiplier",
+        "multiplier":                "multiplier",
+        "recommended_qty_per_order": "items_per_order",
+        "items_per_order":           "items_per_order",
+        "current_qty":               "current_qty",
+        "sort_order":                "sort_order",
+        "price":                     "price",
+        "item":                      "item",
+    }
+    df = df.rename(columns=col_aliases)
+
+    for c in ["item", "product_number", "multiplier", "items_per_order",
+              "current_qty", "sort_order", "price"]:
         if c not in df.columns:
             df[c] = pd.NA
 
@@ -74,7 +82,5 @@ def read_catalog() -> pd.DataFrame:
 
 
 def write_catalog(df: pd.DataFrame) -> None:
-    """
-    Persist inventory changes back to catalog.csv
-    """
     df.to_csv(CATALOG_PATH, index=False)
+    read_catalog.clear()

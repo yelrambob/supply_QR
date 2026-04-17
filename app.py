@@ -107,6 +107,50 @@ def generate_qr_code(data: str, box_size: int = 6, border: int = 2) -> str:
     except ImportError:
         return None
 
+# ---------------- Email body builder ----------------
+def build_email_body(qty_map: dict, catalog, orderer: str, when_str: str) -> str:
+    items = []
+    for pid, qty in qty_map.items():
+        if qty <= 0:
+            continue
+        row = catalog.loc[catalog["product_number"].astype(str) == str(pid)]
+        if row.empty:
+            continue
+        item_name = row.iloc[0]["item"]
+        price     = float(row.iloc[0].get("price", 0) or 0)
+        items.append((pid, qty, item_name, qty * price))
+
+    bins: list[list[tuple]] = []
+    bin_totals: list[float] = []
+    for item in items:
+        pid, qty, item_name, total = item
+        placed = False
+        for i, bin_total in enumerate(bin_totals):
+            if bin_total + total <= 4999:
+                bins[i].append(item)
+                bin_totals[i] += total
+                placed = True
+                break
+        if not placed:
+            bins.append([item])
+            bin_totals.append(total)
+
+    details_lines = [
+        f"<label><input type='checkbox'/> {item_name} (#{pid}): {qty}</label>"
+        for group in bins
+        for pid, qty, item_name, _ in group
+    ]
+    group_lines = [
+        f"<label><input type='checkbox'/> {', '.join(f'&quot;{pid}&quot;' for pid, *_ in grp)} = ${sub:,.0f}</label>"
+        for grp, sub in zip(bins, bin_totals)
+    ]
+
+    return f"""<html><body>
+    <p><strong>New supply order at {when_str}</strong><br>Ordered by: {orderer}</p>
+    <p><strong>Details:</strong><br>{"<br>".join(details_lines)}</p>
+    <p><strong>Product groups (≤$4,999 each):</strong><br>{"<br>".join(group_lines)}</p>
+    </body></html>"""
+
 # ---------------- Session state ----------------
 if "orderer" not in st.session_state:
     st.session_state["orderer"] = None
@@ -261,102 +305,43 @@ with tabs[0]:
 
         rerun_needed = False
         for _, r in edited.iterrows():
-            pid = str(r["product_number"])
+            pid     = str(r["product_number"])
             new_qty = int(r["qty"]) if pd.notna(r["qty"]) else 0
-            if st.session_state["qty_map"].get(pid) != new_qty:
+            old_qty = st.session_state["qty_map"].get(pid, 0)
+            if old_qty != new_qty:
                 st.session_state["qty_map"][pid] = new_qty
-                rerun_needed = True
+                if new_qty != 0:
+                    rerun_needed = True
 
         if rerun_needed:
             st.rerun()
 
         # ---------------- Generate & Log Order ----------------
         if st.button("🧾 Generate & Log Order"):
-            rows = []
-            for pid, qty in st.session_state["qty_map"].items():
-                if qty > 0:
-                    row = catalog.loc[
-                        catalog["product_number"].astype(str) == str(pid)
-                    ]
-                    if not row.empty:
-                        rows.append(
-                            {
-                                "item": row.iloc[0]["item"],
-                                "product_number": pid,
-                                "qty": qty,
-                            }
-                        )
+            full_order = [
+                {
+                    "item":           catalog.loc[catalog["product_number"].astype(str) == str(pid)].iloc[0]["item"],
+                    "product_number": pid,
+                    "qty":            qty,
+                }
+                for pid, qty in st.session_state["qty_map"].items()
+                if qty > 0 and not catalog.loc[catalog["product_number"].astype(str) == str(pid)].empty
+            ]
 
-            order_df = pd.DataFrame(rows)
-
-            if not order_df.empty:
+            if not full_order:
+                st.warning("No items selected.")
+            else:
+                order_df = pd.DataFrame(full_order)
                 when_str = append_log(order_df, orderer)
+                st.success(f"Order logged at {when_str}.")
 
                 if smtp_ok():
                     recipients = all_recipients(emails_df)
-
                     if recipients:
-                        # Build item list with prices
-                        items = []
-                        for _, r in order_df.iterrows():
-                            pid = r["product_number"]
-                            qty = r["qty"]
-                            row = catalog.loc[
-                                catalog["product_number"].astype(str) == str(pid)
-                            ]
-                            price = float(row.iloc[0].get("price", 0) or 0)
-                            items.append((pid, qty, row.iloc[0]["item"], qty * price))
-
-                        # First-fit bin packing: place each item in the first group with room
-                        bins: list[list[tuple]] = []
-                        bin_totals: list[float] = []
-                        for item in items:
-                            pid, qty, item_name, total = item
-                            placed = False
-                            for i, bin_total in enumerate(bin_totals):
-                                if bin_total + total <= 4999:
-                                    bins[i].append(item)
-                                    bin_totals[i] += total
-                                    placed = True
-                                    break
-                            if not placed:
-                                bins.append([item])
-                                bin_totals.append(total)
-
-                        # Details and groups share the same group-first order
-                        details_lines = [
-                            f"<label><input type='checkbox'/> - {item_name} (#{pid}): {qty}</label>"
-                            for group in bins
-                            for pid, qty, item_name, _ in group
-                        ]
-                        group_lines = [
-                            f"<label><input type='checkbox'/> "
-                            f"{', '.join(str(pid) for pid, *_ in grp)} = ${sub:,.0f}</label>"
-                            for grp, sub in zip(bins, bin_totals)
-                        ]
-
-                        body = f"""
-                        <html><body>
-                        <p><strong>New supply order at {when_str}</strong><br>
-                        Ordered by: {orderer}</p>
-
-                        <p><strong>Details:</strong><br>
-                        {"<br>".join(details_lines)}</p>
-
-                        <p><strong>Product:</strong><br>
-                        {"<br>".join(group_lines)}</p>
-                        </body></html>
-                        """
-
+                        body = build_email_body(st.session_state["qty_map"], catalog, orderer, when_str)
                         try:
-                            send_email(
-                                "Supplies Requested",
-                                body,
-                                recipients,
-                            )
-                            st.success(
-                                f"Emailed {len(recipients)} recipient(s)."
-                            )
+                            send_email("Supplies Requested", body, recipients)
+                            st.success(f"Emailed {len(recipients)} recipient(s).")
                         except Exception as e:
                             st.error(f"Email failed: {e}")
 
