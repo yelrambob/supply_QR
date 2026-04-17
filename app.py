@@ -157,7 +157,7 @@ else:
     st.caption("🛒 No items currently selected.")
 
 # ---------------- Tabs ----------------
-tabs = st.tabs(["Create Order", "Adjust Inventory", "Catalog", "Order Logs", "QR Codes", "Barcode Labels"])
+tabs = st.tabs(["Create Order", "Adjust Inventory", "Catalog", "Order Logs", "QR & Barcodes"])
 
 # =====================================================
 # Create Order
@@ -374,9 +374,10 @@ with tabs[1]:
             catalog.copy(),
             use_container_width=True,
             hide_index=True,
+            num_rows="dynamic",
             column_config={
-                "item": st.column_config.TextColumn("Item", disabled=True),
-                "product_number": st.column_config.TextColumn("Product #", disabled=True),
+                "item": st.column_config.TextColumn("Item"),
+                "product_number": st.column_config.TextColumn("Product #"),
                 "multiplier": st.column_config.NumberColumn("Multiplier", min_value=1),
                 "items_per_order": st.column_config.NumberColumn("Items/Order", min_value=1),
                 "current_qty": st.column_config.NumberColumn("Current Qty", min_value=0),
@@ -674,8 +675,3 @@ with tabs[4]:
                             else:
                                 st.code(pid, language=None)
 
-# =====================================================
-# Barcode Labels (legacy tab kept for compatibility)
-# =====================================================
-with tabs[5]:
-    st.info("Barcode labels have moved to the **QR Codes & Labels** tab.")
