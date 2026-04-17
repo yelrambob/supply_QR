@@ -121,13 +121,6 @@ st.markdown(
     f'<p style="text-align:center;color:#999;font-size:.8rem;margin:0">📍 {cart_id}</p>',
     unsafe_allow_html=True,
 )
-st.divider()
-
-orderer_name = st.text_input(
-    "Your name (optional)",
-    placeholder="Leave blank to submit as Anonymous",
-)
-st.divider()
 
 # ── Scanner — JS writes directly to Supabase, never touches Python ─────────────
 scanner_html = f"""<!DOCTYPE html>
@@ -141,7 +134,7 @@ body{{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:transpa
 #btn{{width:100%;padding:15px;font-size:1.05rem;font-weight:700;background:#0068c9;
   color:#fff;border:none;border-radius:10px;cursor:pointer;transition:background .15s}}
 #btn.on{{background:#c0392b}}
-#cam-box{{display:none;position:relative;margin-top:10px;border-radius:12px;
+#cam-box{{display:none;position:relative;margin-top:6px;border-radius:12px;
   overflow:hidden;background:#000;width:100%}}
 #interactive{{width:100%}}
 #interactive video{{width:100%!important;max-height:300px;object-fit:cover}}
@@ -163,7 +156,7 @@ canvas{{display:none}}
 </style>
 </head>
 <body>
-<button id="btn" onclick="toggle()">📷 Scan Item Barcode</button>
+<button id="btn" onclick="toggle()">⏹ Stop Scanner</button>
 <div id="cam-box">
   <div id="interactive" class="viewport"></div>
   <div id="aim"></div>
@@ -284,13 +277,20 @@ async function handleScan(raw) {{
     if (active) setMsg('Ready — scan next item', 'info');
   }}, 2000);
 }}
+
+window.addEventListener('load', start);
 </script>
 </body>
 </html>"""
 
-st.markdown("### 📷 Scanner")
-st.caption("Tap **Scan Item Barcode**, point at any label. Cart updates every few seconds below.")
-components.html(scanner_html, height=460, scrolling=False)
+components.html(scanner_html, height=420, scrolling=False)
+
+st.divider()
+
+orderer_name = st.text_input(
+    "Your name (optional)",
+    placeholder="Leave blank to submit as Anonymous",
+)
 
 st.divider()
 
@@ -309,32 +309,12 @@ def live_cart():
                 order_items.append({
                     "item":           row.iloc[0]["item"],
                     "product_number": pid,
-                    "rec_qty":        int(row.iloc[0].get("multiplier", 1) or 1),
                     "qty":            qty,
                 })
 
     if order_items:
-        cart_df = pd.DataFrame(order_items)
-        edited  = st.data_editor(
-            cart_df,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "item":           st.column_config.TextColumn("Item", disabled=True),
-                "product_number": st.column_config.TextColumn("Product #", disabled=True),
-                "rec_qty":        st.column_config.NumberColumn("Rec. Qty", disabled=True),
-                "qty":            st.column_config.NumberColumn("Qty", min_value=0, step=1),
-            },
-            key="cart_editor",
-        )
-        changed = False
-        for _, r in edited.iterrows():
-            pid, new_qty = str(r["product_number"]), int(r["qty"])
-            if cart.get(pid) != new_qty:
-                cart[pid] = new_qty
-                changed = True
-        if changed:
-            cart_upsert(cart_id, cart)
+        for it in order_items:
+            st.markdown(f"- {it['item']}")
 
         if st.button("🧹 Clear cart"):
             cart_clear(cart_id)
