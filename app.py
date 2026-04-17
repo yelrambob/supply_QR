@@ -651,8 +651,10 @@ with tabs[4]:
                     scan_url  = f"{app_base_url}/scan_order?product_number={pid}&cart_id={selected_loc}"
                     with col:
                         with st.container(border=True):
-                            st.markdown(f"**{item_name}**")
-                            st.caption(f"`{pid}` · Rec: {rec_qty} · {selected_loc}")
+                            st.markdown(
+                                f'<p style="text-align:center;font-size:1.1rem;font-weight:700;margin:4px 0">{item_name}</p>',
+                                unsafe_allow_html=True,
+                            )
                             if bc_available:
                                 try:
                                     import io as _io
@@ -660,13 +662,13 @@ with tabs[4]:
                                     buf = _io.BytesIO()
                                     bc = CODE128(pid, writer=_IW())
                                     bc.write(buf, options={
-                                        "write_text": True, "font_size": 9,
-                                        "text_distance": 3, "module_height": 7.0,
+                                        "write_text": False, "module_height": 7.0,
                                     })
                                     buf.seek(0)
                                     b64 = base64.b64encode(buf.read()).decode()
                                     st.markdown(
-                                        f'<img src="data:image/png;base64,{b64}" '                                        f'style="width:100%;display:block;margin:4px 0"/>',
+                                        f'<img src="data:image/png;base64,{b64}" '
+                                        f'style="width:100%;display:block;margin:4px 0"/>',
                                         unsafe_allow_html=True,
                                     )
                                 except Exception as e:
