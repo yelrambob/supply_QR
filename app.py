@@ -374,9 +374,10 @@ with tabs[1]:
             catalog.copy(),
             use_container_width=True,
             hide_index=True,
+            num_rows="dynamic",
             column_config={
-                "item": st.column_config.TextColumn("Item", disabled=True),
-                "product_number": st.column_config.TextColumn("Product #", disabled=True),
+                "item": st.column_config.TextColumn("Item"),
+                "product_number": st.column_config.TextColumn("Product #"),
                 "multiplier": st.column_config.NumberColumn("Multiplier", min_value=1),
                 "items_per_order": st.column_config.NumberColumn("Items/Order", min_value=1),
                 "current_qty": st.column_config.NumberColumn("Current Qty", min_value=0),
