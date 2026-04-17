@@ -571,18 +571,16 @@ with tabs[4]:
 
                     pid        = str(row["product_number"])
                     item_name  = str(row["item"])
-                    multiplier = int(row.get("multiplier") or 1)
 
                     x = ML + col_i * (LABEL_W + H_GAP)
                     y = PAGE_H - MT - (row_i + 1) * LABEL_H - row_i * V_GAP
                     PAD = 4
 
                     # Item name — centered, bold, up to 2 lines
-                    c.setFont("Helvetica-Bold", 10)
-                    max_chars = int((LABEL_W - PAD*2) / 5.8)
+                    c.setFont("Helvetica-Bold", 12)
+                    max_chars = int((LABEL_W - PAD*2) / 6.8)
                     if len(item_name) <= max_chars:
-                        c.drawCentredString(x + LABEL_W/2, y + LABEL_H - PAD - 10, item_name)
-                        name_lines = 1
+                        c.drawCentredString(x + LABEL_W/2, y + LABEL_H - PAD - 12, item_name)
                     else:
                         split = item_name[:max_chars].rfind(" ")
                         if split == -1:
@@ -591,31 +589,26 @@ with tabs[4]:
                         line2 = item_name[split:].strip()
                         if len(line2) > max_chars:
                             line2 = line2[:max_chars-1] + "…"
-                        c.drawCentredString(x + LABEL_W/2, y + LABEL_H - PAD - 10, line1)
-                        c.drawCentredString(x + LABEL_W/2, y + LABEL_H - PAD - 22, line2)
-                        name_lines = 2
+                        c.drawCentredString(x + LABEL_W/2, y + LABEL_H - PAD - 12, line1)
+                        c.drawCentredString(x + LABEL_W/2, y + LABEL_H - PAD - 26, line2)
 
-                    # Barcode image — lowered when name is 1 line, more room without product number
+                    # Barcode image
                     try:
                         bc_buf = _io.BytesIO()
                         bc = CODE128(pid, writer=_IW())
                         bc.write(bc_buf, options={"write_text": False, "module_height": 10.0, "quiet_zone": 2.0})
                         bc_buf.seek(0)
                         bc_img    = _Image.open(bc_buf)
-                        bc_draw_h = LABEL_H * 0.46
-                        bc_draw_w = LABEL_W * 0.80
+                        bc_draw_h = LABEL_H * 0.52
+                        bc_draw_w = LABEL_W * 0.85
                         bc_x      = x + (LABEL_W - bc_draw_w) / 2
-                        bc_y      = y + 0.20 * _inch
+                        bc_y      = y + PAD
                         out_buf   = _io.BytesIO()
                         bc_img.save(out_buf, format="PNG")
                         out_buf.seek(0)
                         c.drawImage(_ImageReader(out_buf), bc_x, bc_y, width=bc_draw_w, height=bc_draw_h)
                     except Exception:
                         pass
-
-                    # Multiplier line
-                    c.setFont("Helvetica", 8)
-                    c.drawString(x + PAD, y + PAD, f"For a single box order:  {multiplier}")
 
                 c.save()
                 pdf_buf.seek(0)
