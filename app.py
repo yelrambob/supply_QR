@@ -523,14 +523,26 @@ with tabs[4]:
             st.caption("Default is Avery 5163 / 2×4 inch, 10 per sheet. Adjust for your sheet (e.g. 04A-U1).")
             dim_col1, dim_col2, dim_col3 = st.columns(3)
             with dim_col1:
-                lbl_w_in = st.number_input("Label width (in)", value=2.625, step=0.05, format="%.2f", key="lbl_w")
-                lbl_h_in = st.number_input("Label height (in)", value=1.0, step=0.05, format="%.2f", key="lbl_h")
+                lbl_w_in = st.number_input("Label width (in)", value=2.625, step=0.05, format="%.3f", key="lbl_w")
+                lbl_h_in = st.number_input("Label height (in)", value=1.0, step=0.05, format="%.3f", key="lbl_h")
             with dim_col2:
                 lbl_cols = st.number_input("Columns", value=3, min_value=1, max_value=6, step=1, key="lbl_cols")
                 lbl_rows = st.number_input("Rows", value=10, min_value=1, max_value=20, step=1, key="lbl_rows")
             with dim_col3:
-                margin_left_in = st.number_input("Left margin (in)", value=0.19, step=0.01, format="%.2f", key="lbl_ml")
-                margin_top_in  = st.number_input("Top margin (in)", value=0.50, step=0.01, format="%.2f", key="lbl_mt")
+                margin_left_in = st.number_input("Left margin (in)", value=0.19, step=0.01, format="%.3f", key="lbl_ml")
+                margin_top_in  = st.number_input("Top margin (in)", value=0.50, step=0.01, format="%.3f", key="lbl_mt")
+            dim_col4, dim_col5 = st.columns(2)
+            with dim_col4:
+                h_gap_in = st.number_input("Horizontal gap between labels (in)", value=0.13, step=0.005, format="%.3f", key="lbl_hgap")
+            with dim_col5:
+                v_gap_in = st.number_input("Vertical gap between labels (in)", value=0.0, step=0.005, format="%.3f", key="lbl_vgap")
+            row_pitch = lbl_h_in + v_gap_in
+            col_pitch = lbl_w_in + h_gap_in
+            st.caption(
+                f"Row pitch (label height + v-gap): **{row_pitch:.3f} in** — "
+                f"if rows drift **up**, increase v-gap; if rows drift **down**, decrease it. "
+                f"Column pitch: **{col_pitch:.3f} in**."
+            )
 
             # ── PDF generation ─────────────────────────────────────────────
             if bc_available:
@@ -556,8 +568,8 @@ with tabs[4]:
                 ROWS             = int(lbl_rows)
                 ML               = margin_left_in * _inch
                 MT               = margin_top_in  * _inch
-                H_GAP            = max(0.0, (PAGE_W - ML*2 - COLS * LABEL_W) / max(COLS-1, 1))
-                V_GAP            = 0.0
+                H_GAP            = h_gap_in * _inch
+                V_GAP            = v_gap_in * _inch
 
                 pdf_buf = _io.BytesIO()
                 c = _rl_canvas.Canvas(pdf_buf, pagesize=(PAGE_W, PAGE_H))
