@@ -575,35 +575,43 @@ with tabs[4]:
 
                     x = ML + col_i * (LABEL_W + H_GAP)
                     y = PAGE_H - MT - (row_i + 1) * LABEL_H - row_i * V_GAP
-                    PAD = 5
+                    PAD = 4
 
-                    # Product name
-                    c.setFont("Helvetica-Bold", 9)
-                    max_chars = int((LABEL_W - PAD*2) / 5.2)
-                    dname = item_name if len(item_name) <= max_chars else item_name[:max_chars-1] + "..."
-                    c.drawString(x + PAD, y + LABEL_H - PAD - 9, dname)
+                    # Item name — centered, bold, up to 2 lines
+                    c.setFont("Helvetica-Bold", 10)
+                    max_chars = int((LABEL_W - PAD*2) / 5.8)
+                    if len(item_name) <= max_chars:
+                        c.drawCentredString(x + LABEL_W/2, y + LABEL_H - PAD - 10, item_name)
+                        name_lines = 1
+                    else:
+                        split = item_name[:max_chars].rfind(" ")
+                        if split == -1:
+                            split = max_chars
+                        line1 = item_name[:split]
+                        line2 = item_name[split:].strip()
+                        if len(line2) > max_chars:
+                            line2 = line2[:max_chars-1] + "…"
+                        c.drawCentredString(x + LABEL_W/2, y + LABEL_H - PAD - 10, line1)
+                        c.drawCentredString(x + LABEL_W/2, y + LABEL_H - PAD - 22, line2)
+                        name_lines = 2
 
-                    # Barcode image
+                    # Barcode image — lowered when name is 1 line, more room without product number
                     try:
                         bc_buf = _io.BytesIO()
                         bc = CODE128(pid, writer=_IW())
                         bc.write(bc_buf, options={"write_text": False, "module_height": 10.0, "quiet_zone": 2.0})
                         bc_buf.seek(0)
-                        bc_img   = _Image.open(bc_buf)
-                        bc_draw_h = LABEL_H * 0.44
-                        bc_draw_w = LABEL_W * 0.75
-                        bc_x = x + (LABEL_W - bc_draw_w) / 2
-                        bc_y = y + 0.285 * _inch
-                        out_buf = _io.BytesIO()
+                        bc_img    = _Image.open(bc_buf)
+                        bc_draw_h = LABEL_H * 0.46
+                        bc_draw_w = LABEL_W * 0.80
+                        bc_x      = x + (LABEL_W - bc_draw_w) / 2
+                        bc_y      = y + 0.20 * _inch
+                        out_buf   = _io.BytesIO()
                         bc_img.save(out_buf, format="PNG")
                         out_buf.seek(0)
                         c.drawImage(_ImageReader(out_buf), bc_x, bc_y, width=bc_draw_w, height=bc_draw_h)
                     except Exception:
                         pass
-
-                    # Product number
-                    c.setFont("Helvetica", 7.5)
-                    c.drawCentredString(x + LABEL_W/2, y + 0.21 * _inch, pid)
 
                     # Multiplier line
                     c.setFont("Helvetica", 8)
