@@ -151,6 +151,81 @@ def build_email_body(qty_map: dict, catalog, orderer: str, when_str: str) -> str
     <p><strong>Product groups (≤$4,999 each):</strong><br>{"<br>".join(group_lines)}</p>
     </body></html>"""
 
+# ---------------- Label PDF builder ----------------
+def make_label_pdf(items_df, lbl_w_in, lbl_h_in, cols, rows,
+                   ml_in, mt_in, h_gap_in, v_gap_in) -> bytes:
+    import io as _io
+    import barcode as _pbc
+    from barcode.writer import ImageWriter as _IW
+    from reportlab.pdfgen import canvas as _rl_canvas
+    from reportlab.lib.pagesizes import letter as _letter
+    from reportlab.lib.units import inch as _inch
+    from reportlab.lib.utils import ImageReader as _ImageReader
+    from PIL import Image as _Image
+
+    PAGE_W, PAGE_H = _letter
+    LABEL_W = lbl_w_in * _inch
+    LABEL_H = lbl_h_in * _inch
+    COLS    = int(cols)
+    ROWS    = int(rows)
+    ML      = ml_in   * _inch
+    MT      = mt_in   * _inch
+    H_GAP   = h_gap_in * _inch
+    V_GAP   = v_gap_in * _inch
+    PAD     = 4
+    CODE128 = _pbc.get_barcode_class("code128")
+
+    buf = _io.BytesIO()
+    c = _rl_canvas.Canvas(buf, pagesize=(PAGE_W, PAGE_H))
+
+    for label_idx, (_, row) in enumerate(items_df.iterrows()):
+        col_i = label_idx % COLS
+        row_i = (label_idx // COLS) % ROWS
+        if label_idx > 0 and label_idx % (COLS * ROWS) == 0:
+            c.showPage()
+
+        pid       = str(row["product_number"])
+        item_name = str(row["item"])
+
+        x = ML + col_i * (LABEL_W + H_GAP)
+        y = PAGE_H - MT - (row_i + 1) * LABEL_H - row_i * V_GAP
+
+        c.setFont("Helvetica-Bold", 12)
+        max_chars = int((LABEL_W - PAD * 2) / 6.8)
+        if len(item_name) <= max_chars:
+            c.drawCentredString(x + LABEL_W / 2, y + LABEL_H - PAD - 12, item_name)
+        else:
+            split = item_name[:max_chars].rfind(" ")
+            if split == -1:
+                split = max_chars
+            line1 = item_name[:split]
+            line2 = item_name[split:].strip()
+            if len(line2) > max_chars:
+                line2 = line2[:max_chars - 1] + "…"
+            c.drawCentredString(x + LABEL_W / 2, y + LABEL_H - PAD - 12, line1)
+            c.drawCentredString(x + LABEL_W / 2, y + LABEL_H - PAD - 26, line2)
+
+        try:
+            bc_buf = _io.BytesIO()
+            bc = CODE128(pid, writer=_IW())
+            bc.write(bc_buf, options={"write_text": False, "module_height": 10.0, "quiet_zone": 2.0})
+            bc_buf.seek(0)
+            bc_img    = _Image.open(bc_buf)
+            bc_draw_h = LABEL_H * 0.52
+            bc_draw_w = LABEL_W * 0.85
+            bc_x      = x + (LABEL_W - bc_draw_w) / 2
+            bc_y      = y + PAD
+            out_buf   = _io.BytesIO()
+            bc_img.save(out_buf, format="PNG")
+            out_buf.seek(0)
+            c.drawImage(_ImageReader(out_buf), bc_x, bc_y, width=bc_draw_w, height=bc_draw_h)
+        except Exception:
+            pass
+
+    c.save()
+    buf.seek(0)
+    return buf.getvalue()
+
 # ---------------- Session state ----------------
 if "orderer" not in st.session_state:
     st.session_state["orderer"] = None
@@ -201,7 +276,7 @@ else:
     st.caption("🛒 No items currently selected.")
 
 # ---------------- Tabs ----------------
-tabs = st.tabs(["Create Order", "Adjust Inventory", "Catalog", "Order Logs", "QR Codes", "Barcode Labels"])
+tabs = st.tabs(["Create Order", "Adjust Inventory", "Catalog", "Order Logs", "QR Codes", "Print Select Labels"])
 
 # =====================================================
 # Create Order
@@ -527,22 +602,24 @@ with tabs[4]:
                 lbl_h_in = st.number_input("Label height (in)", value=1.0, step=0.05, format="%.3f", key="lbl_h")
             with dim_col2:
                 lbl_cols = st.number_input("Columns", value=3, min_value=1, max_value=6, step=1, key="lbl_cols")
-                lbl_rows = st.number_input("Rows", value=10, min_value=1, max_value=20, step=1, key="lbl_rows")
+                lbl_rows = st.number_input("Rows per page", value=9, min_value=1, max_value=20, step=1, key="lbl_rows")
             with dim_col3:
-                margin_left_in = st.number_input("Left margin (in)", value=0.19, step=0.01, format="%.3f", key="lbl_ml")
-                margin_top_in  = st.number_input("Top margin (in)", value=0.50, step=0.01, format="%.3f", key="lbl_mt")
+                margin_top_in    = st.number_input("Top margin (in)", value=0.50, step=0.005, format="%.3f", key="lbl_mt")
+                margin_bottom_in = st.number_input("Bottom margin (in)", value=0.50, step=0.005, format="%.3f", key="lbl_mb")
+                margin_left_in   = st.number_input("Left margin (in)", value=0.19, step=0.005, format="%.3f", key="lbl_ml")
             dim_col4, dim_col5 = st.columns(2)
             with dim_col4:
                 h_gap_in = st.number_input("Horizontal gap between labels (in)", value=0.13, step=0.005, format="%.3f", key="lbl_hgap")
             with dim_col5:
                 v_gap_in = st.number_input("Vertical gap between labels (in)", value=0.0, step=0.005, format="%.3f", key="lbl_vgap")
+
+            total_h = margin_top_in + int(lbl_rows) * lbl_h_in + max(0, int(lbl_rows) - 1) * v_gap_in + margin_bottom_in
             row_pitch = lbl_h_in + v_gap_in
             col_pitch = lbl_w_in + h_gap_in
-            st.caption(
-                f"Row pitch (label height + v-gap): **{row_pitch:.3f} in** — "
-                f"if rows drift **up**, increase v-gap; if rows drift **down**, decrease it. "
-                f"Column pitch: **{col_pitch:.3f} in**."
-            )
+            if total_h > 11.0:
+                st.warning(f"Total height used: **{total_h:.3f} in** — exceeds 11 in letter page. Reduce rows or margins to prevent cut-off.")
+            else:
+                st.caption(f"Total height used: **{total_h:.3f} in** / 11 in  ·  Row pitch: **{row_pitch:.3f} in**  ·  Col pitch: **{col_pitch:.3f} in** — if rows drift up, increase v-gap; drift down, decrease it.")
 
             # ── PDF generation ─────────────────────────────────────────────
             if bc_available:
@@ -559,74 +636,13 @@ with tabs[4]:
                 rl_available = False
 
             if rl_available and st.button("📄 Download label sheet PDF", key="bc_pdf"):
-                import io as _io
-
-                PAGE_W, PAGE_H   = _letter
-                LABEL_W          = lbl_w_in * _inch
-                LABEL_H          = lbl_h_in * _inch
-                COLS             = int(lbl_cols)
-                ROWS             = int(lbl_rows)
-                ML               = margin_left_in * _inch
-                MT               = margin_top_in  * _inch
-                H_GAP            = h_gap_in * _inch
-                V_GAP            = v_gap_in * _inch
-
-                pdf_buf = _io.BytesIO()
-                c = _rl_canvas.Canvas(pdf_buf, pagesize=(PAGE_W, PAGE_H))
-                CODE128 = _pbc.get_barcode_class("code128")
-
-                for label_idx, (_, row) in enumerate(display_bc.iterrows()):
-                    col_i = label_idx % COLS
-                    row_i = (label_idx // COLS) % ROWS
-                    if label_idx > 0 and label_idx % (COLS * ROWS) == 0:
-                        c.showPage()
-
-                    pid        = str(row["product_number"])
-                    item_name  = str(row["item"])
-
-                    x = ML + col_i * (LABEL_W + H_GAP)
-                    y = PAGE_H - MT - (row_i + 1) * LABEL_H - row_i * V_GAP
-                    PAD = 4
-
-                    # Item name — centered, bold, up to 2 lines
-                    c.setFont("Helvetica-Bold", 12)
-                    max_chars = int((LABEL_W - PAD*2) / 6.8)
-                    if len(item_name) <= max_chars:
-                        c.drawCentredString(x + LABEL_W/2, y + LABEL_H - PAD - 12, item_name)
-                    else:
-                        split = item_name[:max_chars].rfind(" ")
-                        if split == -1:
-                            split = max_chars
-                        line1 = item_name[:split]
-                        line2 = item_name[split:].strip()
-                        if len(line2) > max_chars:
-                            line2 = line2[:max_chars-1] + "…"
-                        c.drawCentredString(x + LABEL_W/2, y + LABEL_H - PAD - 12, line1)
-                        c.drawCentredString(x + LABEL_W/2, y + LABEL_H - PAD - 26, line2)
-
-                    # Barcode image
-                    try:
-                        bc_buf = _io.BytesIO()
-                        bc = CODE128(pid, writer=_IW())
-                        bc.write(bc_buf, options={"write_text": False, "module_height": 10.0, "quiet_zone": 2.0})
-                        bc_buf.seek(0)
-                        bc_img    = _Image.open(bc_buf)
-                        bc_draw_h = LABEL_H * 0.52
-                        bc_draw_w = LABEL_W * 0.85
-                        bc_x      = x + (LABEL_W - bc_draw_w) / 2
-                        bc_y      = y + PAD
-                        out_buf   = _io.BytesIO()
-                        bc_img.save(out_buf, format="PNG")
-                        out_buf.seek(0)
-                        c.drawImage(_ImageReader(out_buf), bc_x, bc_y, width=bc_draw_w, height=bc_draw_h)
-                    except Exception:
-                        pass
-
-                c.save()
-                pdf_buf.seek(0)
+                pdf_bytes = make_label_pdf(
+                    display_bc, lbl_w_in, lbl_h_in, lbl_cols, lbl_rows,
+                    margin_left_in, margin_top_in, h_gap_in, v_gap_in,
+                )
                 st.download_button(
                     "💾 Save label PDF",
-                    data=pdf_buf.getvalue(),
+                    data=pdf_bytes,
                     file_name="barcode_labels.pdf",
                     mime="application/pdf",
                     key="bc_pdf_dl",
@@ -675,7 +691,111 @@ with tabs[4]:
                                 st.code(pid, language=None)
 
 # =====================================================
-# Barcode Labels (legacy tab kept for compatibility)
+# Print Select Labels
 # =====================================================
 with tabs[5]:
-    st.info("Barcode labels have moved to the **QR Codes & Labels** tab.")
+    st.markdown("### 🖨️ Print Selected Labels")
+    st.caption("Check the items you want, then download a PDF with just those labels.")
+
+    if catalog.empty:
+        st.info("No catalog items found.")
+    else:
+        # ── Search ──────────────────────────────────────────────────────────
+        search_sel = st.text_input("Filter items", placeholder="Search by name or product #", key="sel_search")
+
+        sel_catalog = catalog.copy()
+        sel_catalog["product_number"] = sel_catalog["product_number"].astype(str)
+        if search_sel:
+            mask = (
+                sel_catalog["item"].str.contains(search_sel, case=False, na=False)
+                | sel_catalog["product_number"].str.contains(search_sel, case=False, na=False)
+            )
+            sel_catalog = sel_catalog[mask]
+
+        # ── Select / deselect all ───────────────────────────────────────────
+        sc1, sc2 = st.columns(2)
+        with sc1:
+            if st.button("✅ Select all visible", key="sel_all"):
+                for pid in sel_catalog["product_number"].tolist():
+                    st.session_state[f"chk_{pid}"] = True
+                st.rerun()
+        with sc2:
+            if st.button("⬜ Deselect all", key="sel_none"):
+                for pid in catalog["product_number"].astype(str).tolist():
+                    st.session_state[f"chk_{pid}"] = False
+                st.rerun()
+
+        # ── Checkbox table ──────────────────────────────────────────────────
+        sel_catalog["print"] = sel_catalog["product_number"].apply(
+            lambda pid: bool(st.session_state.get(f"chk_{pid}", False))
+        )
+
+        edited_sel = st.data_editor(
+            sel_catalog[["print", "item", "product_number"]],
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "print":          st.column_config.CheckboxColumn("Print", default=False),
+                "item":           st.column_config.TextColumn("Item", disabled=True),
+                "product_number": st.column_config.TextColumn("Product #", disabled=True),
+            },
+            key="sel_editor",
+        )
+
+        for _, r in edited_sel.iterrows():
+            st.session_state[f"chk_{r['product_number']}"] = bool(r["print"])
+
+        selected_pids = [str(r["product_number"]) for _, r in edited_sel.iterrows() if r["print"]]
+        selected_df   = catalog[catalog["product_number"].astype(str).isin(selected_pids)].copy()
+
+        st.caption(f"**{len(selected_df)}** item(s) selected.")
+
+        # ── Label sheet settings ────────────────────────────────────────────
+        st.markdown("#### 📐 Label Sheet Settings")
+        s1, s2, s3 = st.columns(3)
+        with s1:
+            s_lbl_w  = st.number_input("Label width (in)",  value=2.625, step=0.05,  format="%.3f", key="s_lbl_w")
+            s_lbl_h  = st.number_input("Label height (in)", value=1.0,   step=0.05,  format="%.3f", key="s_lbl_h")
+        with s2:
+            s_cols   = st.number_input("Columns",           value=3,     min_value=1, max_value=6, step=1, key="s_cols")
+            s_rows   = st.number_input("Rows per page",     value=9,     min_value=1, max_value=20, step=1, key="s_rows")
+        with s3:
+            s_mt     = st.number_input("Top margin (in)",    value=0.50, step=0.005, format="%.3f", key="s_mt")
+            s_mb     = st.number_input("Bottom margin (in)", value=0.50, step=0.005, format="%.3f", key="s_mb")
+            s_ml     = st.number_input("Left margin (in)",   value=0.19, step=0.005, format="%.3f", key="s_ml")
+        s4, s5 = st.columns(2)
+        with s4:
+            s_hgap   = st.number_input("H gap (in)", value=0.13, step=0.005, format="%.3f", key="s_hgap")
+        with s5:
+            s_vgap   = st.number_input("V gap (in)", value=0.0,  step=0.005, format="%.3f", key="s_vgap")
+
+        s_total_h = s_mt + int(s_rows) * s_lbl_h + max(0, int(s_rows) - 1) * s_vgap + s_mb
+        if s_total_h > 11.0:
+            st.warning(f"Total height: **{s_total_h:.3f} in** — exceeds 11 in. Reduce rows or margins.")
+        else:
+            st.caption(f"Total height: **{s_total_h:.3f} in** / 11 in  ·  Row pitch: **{s_lbl_h + s_vgap:.3f} in**")
+
+        # ── PDF download ────────────────────────────────────────────────────
+        try:
+            import barcode as _pbc2
+            from barcode.writer import ImageWriter as _IW2
+            from reportlab.pdfgen import canvas as _rlc2
+            sel_pdf_ok = True
+        except ImportError:
+            sel_pdf_ok = False
+
+        if sel_pdf_ok:
+            if st.button("📄 Generate selected labels PDF", key="sel_pdf", disabled=selected_df.empty):
+                pdf_bytes = make_label_pdf(
+                    selected_df, s_lbl_w, s_lbl_h, s_cols, s_rows,
+                    s_ml, s_mt, s_hgap, s_vgap,
+                )
+                st.download_button(
+                    "💾 Save selected labels PDF",
+                    data=pdf_bytes,
+                    file_name="selected_labels.pdf",
+                    mime="application/pdf",
+                    key="sel_pdf_dl",
+                )
+        else:
+            st.info("Add `python-barcode[images]` and `reportlab` to requirements.txt to generate PDFs.")
