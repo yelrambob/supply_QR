@@ -1,0 +1,278 @@
+Item,Product_number,Multiplier_per_box,Recommended_qty_per_order,price,category
+Biopatch,160784,1,1,56,602301
+Orange Top Specimen Cont.,7003,1,1,322,602000
+E-Swab,118901,1,1,0.65,602000
+Specimen Bags Small,37433,1,1,22,602000
+Specimen Bags Medium,20471,1,1,1.9,602000
+Specimen Bags Large,36611,1,1,2.9,602000
+Specimen Bags Xtra Large,37439,1,1,49,602000
+"Iv Kits ",104738,1,1,1.5,602100
+Sterile Gauze Large 4X4,24015,1,1,3,602301
+Sterile Gauze Small 2X2,24014,1,1,2,602301
+Small Tegaderms,21092,1,1,20,602301
+Large Tegaderms,592,1,1,29,602301
+"Bandaids ",508,1,1,2,602301
+Circle Bandaids,509,1,1,2,602301
+Knuckle Bandaids,192834,1,1,4,602301
+Fingertip Bandaid,194516,1,1,4,602301
+Medipore,48473,1,1,19,602301
+Drain Sponge W/Slit,213,1,1,3,602301
+"3M Dressing ",48473,1,1,19,602301
+"3"" Inch Tape",23984,1,1,6,602301
+Telfa,24031,1,1,4.9,602301
+Xeroform,20497,1,1,36,602301
+1 Inch Silktape,252538,100,100,0.216,602301
+Sterile Gauze In Tray,20526,1,1,0.4,602301
+Xtra Small Nitrile Gloves,179887,1,10,78,602302
+Small Nitrile Gloves,48730,10,1,8,602302
+Medium Nitrile Gloves,48731,10,1,8,602302
+Large Nitrile Gloves,48732,10,1,8,602302
+Xtra Large Nitrile Gloves,48734,10,1,8,602302
+"6 Gloves ",65694,1,1,64,602302
+6-1/2 Gloves,20711,1,1,64,602302
+7 Gloves,20712,1,1,64,602302
+7-1/2 Gloves,20713,1,1,64,602302
+"8 Gloves ",20714,1,1,64,602302
+"Xl Slipper Socks ",24217,1,1,1,602303
+"2Xl Slipper Socks ",195096,1,1,1,602303
+"3Xl Slipper Socks ",246132,30,1,46,602303
+Child Slipper,153611,30,1,19,602303
+"Red Blunt Tip Needles ",95567,1,1,7,602303
+25G 1-1/2 Eclipse Needle,1341,1,1,15,602303
+20G Spinal Needle,1353,1,1,49,602303
+22G Spinal Needle,1352,25,1,2.5,602303
+"18G Spinal Needle ",20567,1,1,59,602303
+"18G Perc Entry Needle ",70028,1,1,4,602303
+18Gx15Cm Trocar,153349,1,1,14,602303
+18Gx20Cm Trocar,116288,1,1,14,602303
+18Gx10Cm Chiba,75124,1,1,10,602303
+18Gx15Cm Chiba,75125,1,1,10,602303
+18Gx20Cm Chiba,80614,1,1,10,602303
+22Gx20Cm Chiba,10448,1,1,10,602303
+22Gx15Cm Chiba,39638,1,1,10,602303
+20Fr J Thal,39564,1,1,130,602303
+Biopince 18Gx10Cm,232269,1,1,355,602303
+Biopince 18Gx15Cm,232268,1,1,355,602303
+Biopince 18Gx20Cm,232267,1,1,355,602303
+Bard Mission 18X10Cm,176164,1,1,190,602303
+Bard Mission 18X16Cm,176165,1,1,190,602303
+Bard Mission 18X20Cm,176166,1,1,190,602303
+Bard Mission 20X10Cm,176218,1,1,190,602303
+Bard Mission 20X16Cm,176219,1,1,190,602303
+Bard Mission 20X20Cm,176220,1,1,190,602303
+Coaxial 17Gx6.8,151079,1,1,59,602303
+Coaxial 17Gx11.8,151080,1,1,59,602303
+Coaxial 17Gx16.8,160651,1,1,59,602303
+Oncontrol 15Gx3.5,159252,1,1,250,602303
+Oncontrol 15Gx2.7,159251,1,1,523,602303
+Oncontrol 11Gx6,401535,1,1,859,602303
+Bone Marrow Trays,401535,1,1,858.5,602303
+Osteocore 16Gx12.5,39218,1,1,245,602303
+Homer 20Gx7.5Cm,3567,1,1,345,602303
+Homer 20Gx10Cm,103518,1,1,345,602303
+Short Stops,63216,1,1,60,602303
+5 Ml Syringe,1595,1,1,13,602303
+10 Ml Syringe,1596,1,1,22,602303
+20 Ml Syringe,24237,1,1,0.23,602303
+"50 Ml Syringe ",1600,1,1,0.5,602303
+"Toumey Syringe ",23803,1,1,55,602303
+"Double Medrad ",102083,1,1,250,602303
+"Flex Syringe ",235939,1,1,250,602303
+Sterile Saline Flush Syringe,109030,1,1,0.9,602303
+Saline Flush 10 Ml Syringe,64305,16,1,7.85,602303
+"Red Medallion Syringe ",64921,1,1,49,602303
+Franseen 9cm X 18G,213801,1,1,80,602303
+Franseen 15cm X 18G,213802,1,1,80,602303
+Franseen 20cm X 18G,213803,1,1,80,602303
+Franseen 15cm X 20G,213804,1,1,80,602303
+Franseen 20cm X 20G,252038,1,1,80,602303
+Franseen 15cm X 22G,213805,1,1,80,602303
+3 Ml Syringe,1594,1,1,13.25,602303
+Ivy Leads,233538,1,1,34,602305
+Foam Leads,4394,1,1,4,602305
+Peds Pads,97318,1,1,23,602305
+Osteocore 16Gx7.5,163026,1,1,70,602305
+Adultpads,99239,1,1,18,602305
+On Control Trays No Needle,159250,1,1,328,602306
+Guide Wire J 150Cm,208092,1,1,120,602306
+"Peds J Wire ",118013,1,1,13,602306
+Amplatz Superstiff .038X180Cm,2198,1,1,175,602306
+Amplatz Superstiff .038X145Cm,26285,1,1,175,602306
+Amplatz Superstiff .038X75Cm,63206,1,1,175,602306
+Safety Scalpel,62822,1,1,16,602308
+Scalpel,326,1,1,8,602308
+Iv Extension Kit,217088,1,1,1.5,602308
+Hubs,217084,1,1,1,602308
+Clipper Blade,20545,1,1,"2 ",602308
+"Connecting Tubing ",151511,1,1,232,602310
+12Fr J Thal,3609,1,1,130,602310
+16Fr J Thal,60449,1,1,130,602310
+18Fr J Thal,50102,1,1,130,602310
+"1Liter Evac Bottle ",22992,1,1,10,602310
+"Drain Bulb W/Tubing ",117413,1,1,123,602310
+Drain Connection,206088,1,1,2,602310
+Spikes Para Bottles,206088,1,1,1.8,602310
+"Pleura Vac ",21148,1,1,61,602310
+"0 Silk Suture ",1010,1,1,43,602311
+"0 Prolene Suture ",1805,1,1,82,602311
+Probe Covers U/S,150059,1,1,57,602311
+O2 Christmas Tree,1257,1,1,0.3,602314
+"Suction Canister ",40272,1,1,1.15,602314
+"Suction Tubing 20Ft ",251418,1,1,14,602314
+Yankauer,20756,1,1,0.3,602314
+"Para Spikes ",85920,1,1,65,602314
+"Iv Tubing ",217077,1,1,2.5,602315
+Brown Lunch Bags,5293,1,1,0.05,602315
+Surgiform,24017,1,1,4.5,602318
+Embocube Green 2.5X100,224688,1,1,304,602318
+Embocube Green 2.5X50,228790,1,1,304,602318
+Torpedo 2.5X10,224689,1,1,330,602318
+Torpedo 5X10,224690,1,1,330,602318
+Surgifoam,24017,1,1,4.2,602318
+16Fr Foley,20742,1,1,20,602319
+18Fr Foley,20741,1,1,14,602319
+18G Angiocath,199883,1,1,76,602320
+20G Angiocath,199882,1,1,77,602320
+22G Angiocath,199881,1,1,81,602320
+24G Angiocath,199880,1,1,81,602320
+"Kelly Clamp ",21296,1,1,1,602321
+5Fr Dilator,16976,1,1,8,602321
+6Fr Dilator,20942,1,1,8,602321
+7Fr Dilator,39637,1,1,8,602321
+8Fr Dilator,12344,1,1,8,602321
+9Fr Dilator,16484,1,1,8,602321
+10fr Dilator,16815,1,1,8,602321
+12fr Dilator,16817,1,1,8,602321
+14Fr Dilator,16825,1,1,8,602321
+16Fr Dilator,62843,1,1,8,602321
+Apd 6Fr,233716,1,1,3,602324
+Apd 8Fr,233714,1,1,375,602324
+Apd 10Fr,233715,1,1,375,602324
+Apd 12Fr,233719,1,1,375,602324
+Apd 14Fr,233720,1,1,375,602324
+Apd 16Fr,233904,1,1,375,602324
+Para Kits 5/ Box,95541,1,1,270,602324
+5Fr Para Cath Needles,63907,1,1,87,602324
+"Biopsy Trays ",238284,1,1,483,602326
+"Bone Lesion Biopsy Trays ",168315,1,1,2465,602326
+U/S Paracentesis Tray,160935,1,1,466,602326
+Coban Multicolor,222560,1,1,63,602327
+"Chux ",171958,1,1,32,602327
+Urinals,DYND80235S,1,1,0.5,602327
+Urine Cups,1815,1,1,1,602327
+"Bed Pans ",435,1,1,1,602327
+"Sit Sling ",98617,1,1,38,602327
+White Disposable Chair Slip M/L,98616,1,1,41,602327
+White Disposable Chair Slip Xl/Xxl,152966,1,1,624,602327
+White Disposable Chair Slip Xxl/Xxxl,152967,1,1,63,602327
+"Comb ",547,1,1,0.55,602327
+"Patient Belonging Bags ",273,1,1,3.75,602327
+"Ct Table Straps ",212246,1,1,95,602327
+Prevalon Mat 550Lbs,	214976,	1,	1,	828,602327
+Plastic Medicine Cups,1215,1,1,2,602327
+grey bin basin,199,1,1,0.50,602327
+"Nasal Cannula ",250,1,1,0.5,602328
+"Small Nasal Cannula ",195721,1,1,422,602328
+"Infant Nasal Cannula ",60380,1,1,48.75,602328
+Peds Cannula,44896,1,1,.88,602328
+Ped O2 Mask,21409,1,1,60,602328
+Adult O2 Mask,24070,1,1,0.68,602328
+Green O2 Adapter,24280,1,1,0.25,602328
+"Infant O2 Cannula ",60380,1,1,49,602328
+Non-Rebreather Peds,21394,1,1,1.2,602328
+Non-Rebreather Adults,81013,1,1,51,602328
+"O2 Extension Tubing ",245068,1,1,0.4,602328
+O2 Sensor Peds,96212,1,1,315,602328
+Ambu Bags,20744,1,1,6.5,602328
+"Peds Ambu Bags ",22945,1,1,6.5,602328
+Infant Ambu Bags,185900,1,1,160,602328
+o2 connector christmas tree,2776,1,1,0.10,602328
+T-Lock Bone Marrow 8Gx6In,153008,1,1,300,602329
+T-Lock Bone Marrow 11Gx4In,162738,1,1,300,602329
+T-Lock Bone Marrow 11Gx6In,153009,1,1,300,602329
+"Alcohol Wipes ",518,1,1,2,602332
+Green Iv Swabs Prevantics,162051,1,1,11,602332
+Hand Sanitizer Dispenser,230391,1,1,52,602332
+"1"" Inch Single Use ",103562,1,1,0.22,602332
+Adult Bp Cuff,17052,1,1,37,602333
+Small Bp Cuff,60407,1,1.5,1,602333
+Iodine,24030,1,1,3,602335
+Peroxide,100538,1,1,1,602335
+Iv Tegaderms,591,1,1,56,602335
+"Denture Cups ",1283,1,1,4,602336
+"Denture Cup Blue ",164401,1,1,11,602336
+Sterile Gowns,23916,1,1,3,602340
+Blueplastic Gowns,1395,1,1,26.5,602340
+Boufant Caps,406,1,1,5,602340
+Paper Surgical Caps,2010,1,1,10,602340
+"Shoe Covers ",90,1,1,11.5,602340
+Good Masks,238086,1,1,9,602340
+"Comfort Ear Loop Mask ",170889,1,1,34,602340
+Ear Loop Mask Fluid Resist L3,20745,1,1,34,602340
+Green N95,62219,1,1,36,602340
+White N95,228745,1,1,17,602340
+Lung Plug Tract Sealant,204489,1,1,1654,602343
+"Sterile Markers ",3210,50,1,0.5,602350
+Gridlines (LARGE),98598,1,1,111,602350
+Gridlines (SMALL),148704,1,1,111,602350
+Bath Cloths,38918,1,1,19,602350
+Enema Bag,26303,1,1,313,602350
+"Cold Packs ",252320,10,1,23,602350
+"Hot Packs ",252321,10,1,15,602350
+White Emesis Bags,98493,1,1,5,602350
+Alcohol,117993,1,1,1,602350
+Small Chloraprep,87230,1,1,25,602350
+Large Chloarprep,96146,1,1,304,602350
+Torniquets,1094,1,1,15,602350
+"Yellow Arm Foam ",14389,1,1,83,602350
+"Blue/White Prone Pillow ",17210,1,1,81,602350
+Peds Arm Board 5X2,26569,1,1,2,602350
+Peds Arm Board 9X3,4095,1,1,2,602350
+Fuzzy Leg Bag only no connection,20589,1,1,2,602350
+"Fuzzy Leg Bag Combo ",117156,1,1,231,602350
+Statlock 6-8,62368,1,1,119,602350
+Statlock 10-12,62369,1,1,208,602350
+92 In. Slicker,200782,1,1,293,602350
+Pillow Anesthesia Head,17210,1,1,81,602350
+Lifepak Paper,104257,1,1,14,602350
+Odor Eliminator Lemon,222420,1,1,102,602350
+Odor Eliminator,222421,1,1,102,602350
+"Para Bottles 500Ml ",22991,1,1,10,602350
+Ulnar nerve pink elbow pillow,14389,1,1,2,602350
+50Ml Saline (84),23080,84,3 Boxes 252 qty,1.75,602351
+100Ml Saline (64),23081,64,3 Boxes 192 qty,1.75,602351
+150Ml Saline,23074,1,1,,602351
+250Ml Saline,23075,1,1,1.75,602351
+500Ml Saline,23077,1,1,2,602351
+Statlock 12-14,62370,1,1,207.5,602355
+"Contrast Spike ",102463,1,1,48,602355
+"Cysto Tubing ",217077,1,1,2.55,602355
+"Green Swab Tops ",252243,1,1,48,602355
+"3-Way Stopcock ",3429,1,1,0.35,602355
+Argon,154856,1,1,94,602358
+Helium,154855,1,1,1200,602358
+Marker Speed (Bb),99245,1,1,34,602359
+"Enema Ring, Barbiepool",26291,1,1,178,602359
+"Paper Towels ",121,1,1,23,602359
+Ct Cardiac Cable,236444,1,1,214,602359
+Ct Cardiac 4 Wires Leads,237599,1,1,569,602359
+Breeza,122974,1,1,91,602360
+Oral Omni 9Mg,232842,1,1,100,602360
+Oral Omni 12Mg,232843A,1,1,104,602360
+Readicat Berry,92423,1,1,56,602360
+Readicat Banananana,78956,1,1,56,602360
+Readicat Vanilla,119373,1,1,56,602360
+Readicat Mocha,119372,1,1,56,602360
+"Omnipaque 240Mg 50Ml ",174864,1,1,91,602360
+"Omnipaque 350Mg 100Ml ",162069,1,1,168,602360
+"Omnipaque 300Mg 100Ml ",1686,1,1,161,602360
+"Visipaque ",97619,1,1,351,602360
+82.75 In. Slicker,184327,1,1,332,602367
+Prevalon Mat Refurbished,	237971,	1,	1,	575,602367
+Transfer Board Sliding,26790,1,1,190,602397
+"Purple Wipes ",154245,1,1,5.5,602410
+"Bleach Wipes ",159378,1,1,5,602410
+Tissues,85,1,1,0.5,602421
+Prevalon Mat  1000Lbs,	237970,	1,	1,	792,602425
+85.5 In. Slicker,245077,1,1,356,602428
+Prevalon Mat With Hoyer Handle 600Lbs,	238726,	1,	1,	220,620350
