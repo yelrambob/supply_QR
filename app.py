@@ -3,7 +3,6 @@ import pandas as pd
 import zoneinfo
 from datetime import datetime
 from pathlib import Path
-import re
 import io
 import base64
 
@@ -19,9 +18,14 @@ from data.catalog import (
 )
 
 from services.email_service import (
+    EMAILS_PATH,
+    EMAILS2_PATH,
     send_email,
     smtp_ok,
-    all_recipients,
+    smtp_status_text,
+    read_email_file,
+    recipients_for_orderer,
+    build_email_body,
 )
 
 st.set_page_config(page_title="Supply Ordering", page_icon="📦", layout="wide")
@@ -36,7 +40,6 @@ DATA_DIR = APP_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
 
 PEOPLE_PATH = DATA_DIR / "people.txt"
-EMAILS_PATH = DATA_DIR / "emails.csv"
 
 # ---------------- Load people ----------------
 @st.cache_data
@@ -52,36 +55,6 @@ def read_people() -> list[str]:
     except Exception as e:
         st.warning(f"Couldn't read people.txt: {e}")
         return []
-
-# ---------------- Load emails CSV ----------------
-@st.cache_data
-def read_emails() -> pd.DataFrame:
-    if not EMAILS_PATH.exists():
-        return pd.DataFrame(columns=["name", "email"])
-
-    try:
-        df = pd.read_csv(EMAILS_PATH)
-    except Exception as e:
-        st.warning(f"Couldn't read emails.csv: {e}")
-        return pd.DataFrame(columns=["name", "email"])
-
-    df.columns = [str(c).strip().lower() for c in df.columns]
-
-    email_re = re.compile(r"([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})")
-    rows = []
-
-    for _, r in df.iterrows():
-        raw = str(r.get("email", ""))
-        m = email_re.search(raw)
-        if m:
-            rows.append(
-                {
-                    "name": str(r.get("name", "")),
-                    "email": m.group(1),
-                }
-            )
-
-    return pd.DataFrame(rows)
 
 # ---------------- QR Code Generator ----------------
 def generate_qr_code(data: str, box_size: int = 6, border: int = 2) -> str:
@@ -107,49 +80,68 @@ def generate_qr_code(data: str, box_size: int = 6, border: int = 2) -> str:
     except ImportError:
         return None
 
-# ---------------- Email body builder ----------------
-def build_email_body(qty_map: dict, catalog, orderer: str, when_str: str) -> str:
-    items = []
-    for pid, qty in qty_map.items():
-        if qty <= 0:
-            continue
-        row = catalog.loc[catalog["product_number"].astype(str) == str(pid)]
-        if row.empty:
-            continue
-        item_name = row.iloc[0]["item"]
-        price     = float(row.iloc[0].get("price", 0) or 0)
-        items.append((pid, qty, item_name, qty * price))
-
-    bins: list[list[tuple]] = []
-    bin_totals: list[float] = []
-    for item in items:
-        pid, qty, item_name, total = item
-        placed = False
-        for i, bin_total in enumerate(bin_totals):
-            if bin_total + total <= 4999:
-                bins[i].append(item)
-                bin_totals[i] += total
-                placed = True
-                break
-        if not placed:
-            bins.append([item])
-            bin_totals.append(total)
-
-    details_lines = [
-        f"<label><input type='checkbox'/> {item_name} (#{pid}): {qty}</label>"
-        for group in bins
-        for pid, qty, item_name, _ in group
+# ---------------- Order helpers ----------------
+def create_order_dataframe(qty_map: dict, catalog) -> pd.DataFrame:
+    full_order = [
+        {
+            "item":           catalog.loc[catalog["product_number"].astype(str) == str(pid)].iloc[0]["item"],
+            "product_number": pid,
+            "qty":            qty,
+        }
+        for pid, qty in qty_map.items()
+        if qty > 0 and not catalog.loc[catalog["product_number"].astype(str) == str(pid)].empty
     ]
-    group_lines = [
-        f"<label><input type='checkbox'/> {', '.join(f'&quot;{pid}&quot;' for pid, *_ in grp)} = ${sub:,.0f}</label>"
-        for grp, sub in zip(bins, bin_totals)
-    ]
+    return pd.DataFrame(full_order)
 
-    return f"""<html><body>
-    <p><strong>New supply order at {when_str}</strong><br>Ordered by: {orderer}</p>
-    <p><strong>Details:</strong><br>{"<br>".join(details_lines)}</p>
-    <p><strong>Product groups (≤$4,999 each):</strong><br>{"<br>".join(group_lines)}</p>
-    </body></html>"""
+
+def flash(kind: str, message: str):
+    """Queue a status message to survive the st.rerun() that
+    follows a successful order submission."""
+    st.session_state.setdefault("flash", []).append((kind, message))
+
+
+def log_and_email_order(orderer: str, qty_map: dict, catalog,
+                        normal_emails_df: pd.DataFrame,
+                        special_emails_df: pd.DataFrame) -> bool:
+    order_df = create_order_dataframe(qty_map, catalog)
+    if order_df.empty:
+        st.warning("No items selected.")
+        return False
+
+    when_str = append_log(order_df, orderer)
+    flash("success", f"Order logged at {when_str}.")
+
+    if not smtp_ok():
+        flash(
+            "error",
+            "Order was logged, but no email was sent: SMTP is not configured "
+            "(missing host/user/password/from in st.secrets['smtp']).",
+        )
+        return True
+
+    recipients, special_only = recipients_for_orderer(
+        orderer, normal_emails_df, special_emails_df
+    )
+    if not recipients:
+        if special_only:
+            flash("error", f"{orderer} was selected, but no valid email address was found in data/emails2.csv.")
+        else:
+            flash("error", "No valid email recipients were found.")
+        return True
+
+    body = build_email_body(qty_map, catalog, orderer, when_str)
+    try:
+        send_email(
+            "Supplies Requested", body, recipients,
+            include_default_recipients=not special_only,
+        )
+        if special_only:
+            flash("success", f"{orderer}'s order email was sent only to the emails2.csv recipient list ({len(recipients)} recipient(s)).")
+        else:
+            flash("success", f"Emailed {len(recipients)} recipient(s).")
+    except Exception as e:
+        flash("error", f"Email failed: {e}")
+    return True
 
 # ---------------- Label PDF builder ----------------
 def make_label_pdf(items_df, lbl_w_in, lbl_h_in, cols, rows,
@@ -233,15 +225,19 @@ if "orderer" not in st.session_state:
 if "qty_map" not in st.session_state:
     st.session_state["qty_map"] = {}
 
+for _flash_kind, _flash_message in st.session_state.pop("flash", []):
+    getattr(st, _flash_kind)(_flash_message)
+
 # ---------------- UI ----------------
 st.title("📦 Supply Ordering & Inventory Tracker")
 
 people = read_people()
-emails_df = read_emails()
+emails_df = read_email_file(EMAILS_PATH)
+special_emails_df = read_email_file(EMAILS2_PATH)
 catalog = read_catalog()
 logs = read_log()
 
-email_ready = "✅" if smtp_ok() else "❌"
+email_ready = smtp_status_text()
 st.caption(
     f"Loaded {len(catalog)} catalog rows • "
     f"{len(logs)} log rows • "
@@ -269,9 +265,12 @@ if selected_items:
     product_numbers = [i["product_number"] for i in selected_items]
     st.markdown(f"**Product Numbers:** {', '.join(product_numbers)}")
 
-    if st.button("🧹 Clear Current Order"):
-        st.session_state["qty_map"] = {}
-        st.rerun()
+    if st.button("🧾 Generate & Log Order", key="gen_log_top"):
+        top_orderer = st.session_state.get("orderer") or (people[0] if people else "Unknown")
+        if log_and_email_order(top_orderer, st.session_state["qty_map"], catalog,
+                               emails_df, special_emails_df):
+            st.session_state["qty_map"] = {}
+            st.rerun()
 else:
     st.caption("🛒 No items currently selected.")
 
@@ -392,36 +391,15 @@ with tabs[0]:
             st.rerun()
 
         # ---------------- Generate & Log Order ----------------
-        if st.button("🧾 Generate & Log Order"):
-            full_order = [
-                {
-                    "item":           catalog.loc[catalog["product_number"].astype(str) == str(pid)].iloc[0]["item"],
-                    "product_number": pid,
-                    "qty":            qty,
-                }
-                for pid, qty in st.session_state["qty_map"].items()
-                if qty > 0 and not catalog.loc[catalog["product_number"].astype(str) == str(pid)].empty
-            ]
-
-            if not full_order:
-                st.warning("No items selected.")
-            else:
-                order_df = pd.DataFrame(full_order)
-                when_str = append_log(order_df, orderer)
-                st.success(f"Order logged at {when_str}.")
-
-                if smtp_ok():
-                    recipients = all_recipients(emails_df)
-                    if recipients:
-                        body = build_email_body(st.session_state["qty_map"], catalog, orderer, when_str)
-                        try:
-                            send_email("Supplies Requested", body, recipients)
-                            st.success(f"Emailed {len(recipients)} recipient(s).")
-                        except Exception as e:
-                            st.error(f"Email failed: {e}")
-
+        if st.button("🧾 Generate & Log Order", key="gen_log_main"):
+            if log_and_email_order(orderer, st.session_state["qty_map"], catalog,
+                                   emails_df, special_emails_df):
                 st.session_state["qty_map"] = {}
                 st.rerun()
+
+        if st.button("🧹 Clear Current Order"):
+            st.session_state["qty_map"] = {}
+            st.rerun()
 
 # =====================================================
 # Adjust Inventory

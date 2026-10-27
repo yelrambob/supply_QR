@@ -68,6 +68,8 @@ def read_catalog() -> pd.DataFrame:
     # Normalize types
     df["item"] = df["item"].astype(str).str.strip()
     df["product_number"] = df["product_number"].astype(str).str.strip()
+    if "category" in df.columns:
+        df["category"] = df["category"].fillna("").astype(str).str.strip()
     df["multiplier"] = pd.to_numeric(df["multiplier"], errors="coerce").fillna(1).astype(int)
     df["items_per_order"] = pd.to_numeric(df["items_per_order"], errors="coerce").fillna(1).astype(int)
     df["current_qty"] = pd.to_numeric(df["current_qty"], errors="coerce").fillna(0).astype(int)

@@ -14,7 +14,6 @@ import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
 import json
-import re
 from pathlib import Path
 import sys
 import time
@@ -24,13 +23,19 @@ if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
 from data.catalog import read_catalog
-from services.email_service import send_email, smtp_ok, all_recipients
+from services.email_service import (
+    EMAILS_PATH,
+    EMAILS2_PATH,
+    send_email,
+    smtp_ok,
+    read_email_file,
+    recipients_for_orderer,
+    build_email_body,
+)
 from db.supabase_client import append_log
 
 st.set_page_config(page_title="Quick Supply Order", page_icon="📱", layout="centered")
 
-DATA_DIR    = APP_DIR / "data"
-EMAILS_PATH = DATA_DIR / "emails.csv"
 CART_TABLE  = "pending_carts"
 
 
@@ -38,24 +43,6 @@ CART_TABLE  = "pending_carts"
 def get_sb():
     from supabase import create_client
     return create_client(st.secrets["supabase"]["url"], st.secrets["supabase"]["key"])
-
-
-@st.cache_data
-def read_emails() -> pd.DataFrame:
-    if not EMAILS_PATH.exists():
-        return pd.DataFrame(columns=["name", "email"])
-    try:
-        df = pd.read_csv(EMAILS_PATH)
-    except Exception:
-        return pd.DataFrame(columns=["name", "email"])
-    df.columns = [str(c).strip().lower() for c in df.columns]
-    email_re = re.compile(r"([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})")
-    rows = []
-    for _, r in df.iterrows():
-        m = email_re.search(str(r.get("email", "")))
-        if m:
-            rows.append({"name": str(r.get("name", "")), "email": m.group(1)})
-    return pd.DataFrame(rows)
 
 
 # ── Supabase cart helpers ──────────────────────────────────────────────────────
@@ -84,7 +71,8 @@ def cart_clear(cart_id: str):
 
 # ── Load data ──────────────────────────────────────────────────────────────────
 catalog   = read_catalog()
-emails_df = read_emails()
+emails_df = read_email_file(EMAILS_PATH)
+special_emails_df = read_email_file(EMAILS2_PATH)
 
 if catalog.empty:
     st.error("Catalog is not available.")
@@ -355,41 +343,28 @@ def live_cart():
                 when_str = append_log(order_df, orderer)
 
             email_sent, email_error, recipients = False, None, []
-            if smtp_ok():
-                recipients = all_recipients(emails_df)
-                if recipients:
-                    product_groups, current_group, running_total, details_lines = [], [], 0.0, []
-                    for it in order_items:
-                        pid, qty = it["product_number"], it["qty"]
-                        row = catalog.loc[catalog["product_number"].astype(str) == str(pid)]
-                        if not row.empty:
-                            item_name = row.iloc[0]["item"]
-                            price     = float(row.iloc[0].get("price", 0) or 0)
-                            total     = qty * price
-                            if running_total + total > 4999 and current_group:
-                                product_groups.append((current_group.copy(), running_total))
-                                current_group, running_total = [], 0.0
-                            running_total += total
-                            current_group.append(pid)
-                            details_lines.append(
-                                f"<label><input type='checkbox'/> - {item_name} (#{pid}): {qty}</label>"
-                            )
-                    if current_group:
-                        product_groups.append((current_group, running_total))
-                    group_lines = [
-                        f"<label><input type='checkbox'/> "
-                        f"{', '.join(chr(34)+p+chr(34) for p in g)} = ${t:,.0f}</label>"
-                        for g, t in product_groups
-                    ]
-                    notes_html = f"<p><strong>Notes:</strong> {notes}</p>" if notes.strip() else ""
-                    body = f"""<html><body>
-<p><strong>📱 Scan order [{cart_id}] at {when_str}</strong><br>Ordered by: {orderer}</p>
-<p><strong>Details:</strong><br>{"<br>".join(details_lines)}</p>
-<p><strong>Product:</strong><br>{"<br>".join(group_lines)}</p>
-{notes_html}
-</body></html>"""
+            if not smtp_ok():
+                email_error = "SMTP is not configured (missing host/user/password/from in st.secrets['smtp'])."
+            else:
+                recipients, special_only = recipients_for_orderer(orderer, emails_df, special_emails_df)
+                if not recipients:
+                    email_error = (
+                        "no valid email address was found in data/emails2.csv."
+                        if special_only
+                        else "no valid email recipients were found."
+                    )
+                else:
+                    qty_map = {it["product_number"]: it["qty"] for it in order_items}
+                    body = build_email_body(
+                        qty_map, catalog, orderer, when_str,
+                        heading=f"📱 Scan order [{cart_id}] at {when_str}",
+                        notes=notes,
+                    )
                     try:
-                        send_email("Supply Order Logged", body, recipients)
+                        send_email(
+                            "Supply Order Logged", body, recipients,
+                            include_default_recipients=not special_only,
+                        )
                         email_sent = True
                     except Exception as e:
                         email_error = str(e)
@@ -402,7 +377,7 @@ def live_cart():
             if email_sent:
                 st.info(f"📧 Email sent to {len(recipients)} recipient(s).")
             elif email_error:
-                st.warning(f"Logged but email failed: {email_error}")
+                st.warning(f"Logged but no email was sent: {email_error}")
             st.balloons()
 
 live_cart()
