@@ -246,7 +246,15 @@ def build_email_body(
     heading = heading or f"New supply order at {when_str}"
     notes_html = f"<p><strong>Notes:</strong> {notes}</p>" if notes.strip() else ""
 
+    # Inline styles so the banner renders in email clients that strip <style>.
+    banner_html = (
+        "<h1 style='font-size:40px;font-weight:bold;color:#b00020;"
+        "text-align:center;margin:0 0 16px 0;padding:12px;"
+        "border:4px solid #b00020;'>ORDER THESE ITEMS</h1>"
+    )
+
     return f"""<html><body>
+    {banner_html}
     <p><strong>{heading}</strong><br>Ordered by: {orderer}</p>
     <p><strong>Details:</strong><br>{"<br>".join(details_lines)}</p>
     <p><strong>Product groups (≤$4,999 and ≤{GROUP_MAX_CHARS} characters each):</strong><br>{"<br>".join(group_lines)}</p>
