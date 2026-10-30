@@ -690,43 +690,82 @@ with tabs[5]:
             )
             sel_catalog = sel_catalog[mask]
 
+        # Selection lives in session state keyed by product # + item name, so
+        # it survives filtering and duplicate product numbers stay distinct.
+        sel_state = st.session_state.setdefault("label_sel", {})
+        st.session_state.setdefault("label_sel_ver", 0)
+
+        def _lbl_key(r):
+            return f"{r['product_number']}|{r['item']}"
+
+        all_catalog = catalog.copy()
+        all_catalog["product_number"] = all_catalog["product_number"].astype(str)
+        all_catalog["_key"] = all_catalog.apply(_lbl_key, axis=1)
+        sel_catalog["_key"] = sel_catalog.apply(_lbl_key, axis=1)
+
         # ── Select / deselect all ───────────────────────────────────────────
         sc1, sc2 = st.columns(2)
         with sc1:
             if st.button("✅ Select all visible", key="sel_all"):
-                for pid in sel_catalog["product_number"].tolist():
-                    st.session_state[f"chk_{pid}"] = True
+                for k in sel_catalog["_key"]:
+                    sel_state.setdefault(k, {"print": False, "copies": 1})["print"] = True
+                st.session_state["label_sel_ver"] += 1
                 st.rerun()
         with sc2:
             if st.button("⬜ Deselect all", key="sel_none"):
-                for pid in catalog["product_number"].astype(str).tolist():
-                    st.session_state[f"chk_{pid}"] = False
+                for v in sel_state.values():
+                    v["print"] = False
+                st.session_state["label_sel_ver"] += 1
                 st.rerun()
 
         # ── Checkbox table ──────────────────────────────────────────────────
-        sel_catalog["print"] = sel_catalog["product_number"].apply(
-            lambda pid: bool(st.session_state.get(f"chk_{pid}", False))
-        )
+        # The editor records edits by row position on top of the data it was
+        # given, so keep that data frozen for a given filter/bulk-select and
+        # only rebuild it (with a fresh editor key) when those change.
+        editor_key = f"sel_editor_{st.session_state['label_sel_ver']}_{search_sel}"
+        base = st.session_state.get("label_sel_base")
+        if base is None or base[0] != editor_key:
+            sel_catalog["print"] = sel_catalog["_key"].map(
+                lambda k: bool(sel_state.get(k, {}).get("print", False))
+            )
+            sel_catalog["copies"] = sel_catalog["_key"].map(
+                lambda k: int(sel_state.get(k, {}).get("copies", 1))
+            )
+            base = (editor_key, sel_catalog[["print", "copies", "item", "product_number", "_key"]].reset_index(drop=True))
+            st.session_state["label_sel_base"] = base
 
         edited_sel = st.data_editor(
-            sel_catalog[["print", "item", "product_number"]],
+            base[1],
             use_container_width=True,
             hide_index=True,
+            column_order=["print", "copies", "item", "product_number"],
             column_config={
                 "print":          st.column_config.CheckboxColumn("Print", default=False),
+                "copies":         st.column_config.NumberColumn("Copies", min_value=1, max_value=500, step=1, default=1),
                 "item":           st.column_config.TextColumn("Item", disabled=True),
                 "product_number": st.column_config.TextColumn("Product #", disabled=True),
             },
-            key="sel_editor",
+            disabled=["_key"],
+            key=editor_key,
         )
 
         for _, r in edited_sel.iterrows():
-            st.session_state[f"chk_{r['product_number']}"] = bool(r["print"])
+            copies = pd.to_numeric(r["copies"], errors="coerce")
+            sel_state[r["_key"]] = {
+                "print":  bool(r["print"]),
+                "copies": max(1, int(copies)) if pd.notna(copies) else 1,
+            }
 
-        selected_pids = [str(r["product_number"]) for _, r in edited_sel.iterrows() if r["print"]]
-        selected_df   = catalog[catalog["product_number"].astype(str).isin(selected_pids)].copy()
+        selected_df = all_catalog[
+            all_catalog["_key"].map(lambda k: sel_state.get(k, {}).get("print", False))
+        ].copy()
+        selected_df["copies"] = selected_df["_key"].map(lambda k: sel_state[k]["copies"])
+        selected_df = selected_df.loc[selected_df.index.repeat(selected_df["copies"])]
 
-        st.caption(f"**{len(selected_df)}** item(s) selected.")
+        st.caption(
+            f"**{selected_df['_key'].nunique()}** item(s) selected · "
+            f"**{len(selected_df)}** label(s) total."
+        )
 
         # ── Label sheet settings ────────────────────────────────────────────
         st.markdown("#### 📐 Label Sheet Settings")
