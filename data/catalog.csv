@@ -6,7 +6,7 @@ product_number,item,multiplier,items_per_order,current_qty,sort_order,price,cate
 20471,Specimen Bags Medium,1,1,0,3,1.9,602000
 37433,Specimen Bags Small,1,1,0,2,22.0,602000
 37439,Specimen Bags Xtra Large,1,1,0,5,49.0,602000
-104738,Iv Kits DO NOT ORDER FOR A WHILE,1,1,0,6,1.5,602100
+104738,Iv Kits,1,1,0,6,1.5,602100
 252538,1 Inch Silktape,100,100,0,21,0.216,602301
 23984,"3"" Inch Tape",1,1,0,18,6.0,602301
 508,Bandaids,1,1,0,12,2.0,602301
@@ -100,7 +100,7 @@ product_number,item,multiplier,items_per_order,current_qty,sort_order,price,cate
 118013,Peds J Wire,1,1,0,94,13.0,602306
 20545,Clipper Blade,1,1,0,102,2.0,602308
 217084,Hubs,1,1,0,101,1.0,602308
-217088,Iv Extension Kit DO NOT ORDER FOR A WHILE,1,1,0,100,1.5,602308
+217088,Iv Extension Kit,1,1,0,100,1.5,602308
 62822,Safety Scalpel,1,1,0,98,16.0,602308
 326,Scalpel,1,1,0,99,8.0,602308
 3609,12Fr J Thal,1,1,0,104,130.0,602310
