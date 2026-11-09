@@ -110,14 +110,23 @@ def log_and_email_order(orderer: str, qty_map: dict, catalog,
 
     when_str = append_log(order_df, orderer)
     flash("success", f"Order logged at {when_str}.")
+    email_order(orderer, qty_map, catalog, when_str,
+                normal_emails_df, special_emails_df)
+    return True
 
+
+def email_order(orderer: str, qty_map: dict, catalog, when_str: str,
+                normal_emails_df: pd.DataFrame,
+                special_emails_df: pd.DataFrame,
+                heading: str | None = None) -> None:
+    """Send the order email, reporting the outcome via flash()."""
     if not smtp_ok():
         flash(
             "error",
             "Order was logged, but no email was sent: SMTP is not configured "
             "(missing host/user/password/from in st.secrets['smtp']).",
         )
-        return True
+        return
 
     recipients, special_only = recipients_for_orderer(
         orderer, normal_emails_df, special_emails_df
@@ -127,9 +136,9 @@ def log_and_email_order(orderer: str, qty_map: dict, catalog,
             flash("error", f"{orderer} was selected, but no valid email address was found in data/emails2.csv.")
         else:
             flash("error", "No valid email recipients were found.")
-        return True
+        return
 
-    body = build_email_body(qty_map, catalog, orderer, when_str)
+    body = build_email_body(qty_map, catalog, orderer, when_str, heading=heading)
     try:
         send_email(
             "Supplies Requested", body, recipients,
@@ -141,7 +150,6 @@ def log_and_email_order(orderer: str, qty_map: dict, catalog,
             flash("success", f"Emailed {len(recipients)} recipient(s).")
     except Exception as e:
         flash("error", f"Email failed: {e}")
-    return True
 
 # ---------------- Label PDF builder ----------------
 def make_label_pdf(items_df, lbl_w_in, lbl_h_in, cols, rows,
@@ -448,6 +456,58 @@ with tabs[3]:
             file_name="order_log.csv",
             mime="text/csv",
         )
+
+        # ---------------- Resend an order email ----------------
+        st.markdown("### 📧 Resend an order email")
+        # An order is every log row sharing the same timestamp and orderer.
+        orders = (
+            logs.groupby(["ordered_at", "orderer"], sort=False, dropna=False)
+            .size()
+            .reset_index(name="lines")
+            .sort_values("ordered_at", ascending=False)
+            .reset_index(drop=True)
+        )
+        choice = st.selectbox(
+            "Order",
+            options=orders.index.tolist(),
+            format_func=lambda i: (
+                f"{orders.at[i, 'ordered_at']} — {orders.at[i, 'orderer']} "
+                f"({orders.at[i, 'lines']} item(s))"
+            ),
+            key="resend_order",
+        )
+        sel = orders.loc[choice]
+        order_rows = logs[
+            (logs["ordered_at"] == sel["ordered_at"])
+            & (logs["orderer"] == sel["orderer"])
+        ]
+        st.dataframe(
+            order_rows[["item", "product_number", "qty"]],
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        resend_qty_map = (
+            order_rows.assign(product_number=order_rows["product_number"].astype(str))
+            .groupby("product_number")["qty"].sum().astype(int).to_dict()
+        )
+        missing = sorted(
+            set(resend_qty_map)
+            - set(catalog["product_number"].astype(str))
+        ) if not catalog.empty else sorted(resend_qty_map)
+        if missing:
+            st.warning(
+                "These product numbers are no longer in the catalog and will "
+                f"be left out of the email: {', '.join(missing)}"
+            )
+
+        if st.button("📧 Resend email for this order", key="resend_email"):
+            email_order(
+                str(sel["orderer"]), resend_qty_map, catalog, str(sel["ordered_at"]),
+                emails_df, special_emails_df,
+                heading=f"Resent: supply order from {sel['ordered_at']}",
+            )
+            st.rerun()
 
 # =====================================================
 # QR Codes & Labels
