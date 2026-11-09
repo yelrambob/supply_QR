@@ -1,0 +1,11 @@
+[Unit]
+Description=Run wake-supply-qr.service on a schedule
+
+[Timer]
+# Every 6 hours, plus once ~5min after boot in case the box restarts.
+OnCalendar=*-*-* 0/6:00:00
+OnBootSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
