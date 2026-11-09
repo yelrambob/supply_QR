@@ -1,0 +1,10 @@
+[Unit]
+Description=Wake the supply_QR Streamlit Community Cloud app
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/supply_QR
+ExecStart=/opt/supply_QR/venv/bin/python /opt/supply_QR/.github/scripts/wake_streamlit.py
+User=www-data
